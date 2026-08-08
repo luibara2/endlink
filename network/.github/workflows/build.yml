@@ -1,0 +1,25 @@
+name: Build
+on:
+  push:
+    branches:
+        - '**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Kas-tle/NetworkCompatible/.github/setup-gradle-composite@master
+      - name: Build
+        run: ./gradlew build
+      - name: Archive Artifacts (transport-raknet)
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: netty-transport-raknet
+          path: transport-raknet/build/libs/*.jar
+          if-no-files-found: error
+      - name: Archive Artifacts (transport-nethernet)
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: netty-transport-nethernet
+          path: transport-nethernet/build/libs/*.jar
+          if-no-files-found: error

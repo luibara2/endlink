@@ -1,0 +1,46 @@
+---
+config:
+  layout: elk
+  theme: redux-dark
+---
+flowchart RL
+ subgraph InternalPipeline["<b>RakNet Internal Pipeline</b><br>(RakChildChannel)"]
+    direction TB
+        ChildDatagramHandler["<b>RakChildDatagramHandler</b><br><i>Bridge to Parent Channel</i>"]
+        DatagramCodec["<b>RakDatagramCodec</b><br><i>Encodes/Decodes<br>RakNet Datagrams</i>"]
+        AckHandler["<b>RakAcknowledgeHandler</b><br><i>Manages ACKs/NACKs</i>"]
+        SessionCodec["<b>RakSessionCodec</b><br><i>Reliability, Ordering,<br>Split Packets</i>"]
+  end
+ subgraph UserPipeline["<b>User ChannelPipeline</b>"]
+        UserLogic["<b>User Handlers</b><br><i>Application Logic<br>(e.g. Bedrock Protocol)</i>"]
+  end
+    Network(("Network Socket")) == Inbound <i>UDP Datagram</i> ==> Parent["<b>RakServerChannel</b><br><i>UDP Bind &amp; Routing</i>"]
+    Parent == Routed <i>DatagramPacket</i> ==> ChildDatagramHandler
+    ChildDatagramHandler == <i>DatagramPacket</i> ==> DatagramCodec & Parent
+    DatagramCodec == <i>EncapsulatedPacket</i> ==> AckHandler
+    AckHandler == <i>EncapsulatedPacket</i> ==> SessionCodec & DatagramCodec
+    SessionCodec == <i>ByteBuf</i> ==> UserLogic
+    UserLogic == <i>ByteBuf</i> ==> SessionCodec
+    SessionCodec == <i>EncapsulatedPacket</i> ==> AckHandler
+    DatagramCodec == <i>DatagramPacket</i> ==> ChildDatagramHandler
+    Parent == Outbound <i>UDP Datagram</i> ==> Network
+
+     ChildDatagramHandler:::shared
+     DatagramCodec:::shared
+     AckHandler:::shared
+     SessionCodec:::shared
+    classDef shared fill:#9b59b6,stroke:#333,stroke-width:2px
+    classDef incoming fill:#2ecc71,stroke:#333,stroke-width:2px
+    classDef outgoing fill:#3498db,stroke:#333,stroke-width:2px
+    linkStyle 0 stroke:#2ecc71,stroke-width:4px,color:#2ecc71,fill:none
+    linkStyle 1 stroke:#2ecc71,stroke-width:4px,color:#2ecc71,fill:none
+    linkStyle 2 stroke:#2ecc71,stroke-width:4px,color:#2ecc71,fill:none
+    linkStyle 3 stroke:#3498db,stroke-width:4px,color:#3498db,fill:none
+    linkStyle 4 stroke:#2ecc71,stroke-width:4px,color:#2ecc71,fill:none
+    linkStyle 5 stroke:#2ecc71,stroke-width:4px,color:#2ecc71,fill:none
+    linkStyle 6 stroke:#3498db,stroke-width:4px,color:#3498db,fill:none
+    linkStyle 7 stroke:#2ecc71,stroke-width:4px,color:#2ecc71,fill:none
+    linkStyle 8 stroke:#3498db,stroke-width:4px,color:#3498db,fill:none
+    linkStyle 9 stroke:#3498db,stroke-width:4px,color:#3498db,fill:none
+    linkStyle 10 stroke:#3498db,stroke-width:4px,color:#3498db,fill:none
+    linkStyle 11 stroke:#3498db,stroke-width:4px,color:#3498db,fill:none

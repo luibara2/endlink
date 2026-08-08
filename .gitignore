@@ -1,0 +1,80 @@
+# ==============================================================================================
+#  Endlink — what never goes into the repository
+# ==============================================================================================
+
+# ----------------------------------------------------------------------------------------------
+#  Anything with real players or real secrets in it
+# ----------------------------------------------------------------------------------------------
+# Server logs carry player names, XUIDs and IP addresses. That is other people's personal data and
+# it must not end up in a repository, private or not.
+logs/
+*.log
+run/
+*.pid
+
+# The live config and its runtime companions. config.example.properties is the documented template
+# and is committed; this is the one with a real shared secret, real backend addresses and real
+# operator XUIDs in it.
+config.properties
+permissions.properties
+recorder.properties
+
+# Generated at runtime by the addon: the translator's own config, caches, saves and extracted jar.
+plugins/
+viaproxy.yml
+saves.json
+blob_cache/
+server_packs/
+
+# Credentials of any kind, wherever they turn up.
+*.env
+.env
+accounts.json
+*auth-cache*/
+*.pem
+*.key
+*.jks
+*.p12
+
+# ----------------------------------------------------------------------------------------------
+#  Build output and artifacts — rebuilt from source, and large
+# ----------------------------------------------------------------------------------------------
+build/
+dist/
+.gradle/
+out/
+*.class
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Whole-workspace snapshots. Large, and they contain everything above.
+full-source-backup-*.tar.gz
+full-source-backup-*.tar.gz.sha256
+
+# ----------------------------------------------------------------------------------------------
+#  Editor and OS noise
+# ----------------------------------------------------------------------------------------------
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+.claude/
+
+# Session scratch, not part of the project.
+prompt.txt
+
+# ----------------------------------------------------------------------------------------------
+#  Internal to this workspace, not part of the published source
+# ----------------------------------------------------------------------------------------------
+# Working notes and planning kept beside the code but deliberately not published.
+HANDOFF.md
+ROADMAP.md
+*-PLAN.md
+# Local launch helpers and the packet-capture tooling used for protocol debugging.
+run-*.ps1
+recorder.properties
+recorder.example.properties
+src/main/java/org/endstone/proxy/recorder/
