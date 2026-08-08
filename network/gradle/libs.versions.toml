@@ -1,0 +1,33 @@
+[versions]
+netty = "4.1.130.Final"
+junit = "5.14.1"
+webrtc-java = "1.0.3"
+gson = "2.13.2"
+nmcp = "1.4.0"
+
+[libraries]
+expiringmap = { group = "net.jodah", name = "expiringmap", version = "0.5.10" }
+gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
+netty-common = { group = "io.netty", name = "netty-common", version.ref = "netty" }
+netty-buffer = { group = "io.netty", name = "netty-buffer", version.ref = "netty" }
+netty-codec = { group = "io.netty", name = "netty-codec", version.ref = "netty" }
+netty-codec-http = { group = "io.netty", name = "netty-codec-http", version.ref = "netty" }
+netty-transport = { group = "io.netty", name = "netty-transport", version.ref = "netty" }
+netty-transport-native-unix-common = { group = "io.netty", name = "netty-transport-native-unix-common", version.ref = "netty" }
+webrtc-java = { group = "dev.kastle.webrtc", name = "webrtc-java", version.ref = "webrtc-java" }
+
+# Test dependencies
+junit-jupiter-engine = { group = "org.junit.jupiter", name = "junit-jupiter-engine", version.ref = "junit" }
+junit-jupiter-api = { group = "org.junit.jupiter", name = "junit-jupiter-api", version.ref = "junit" }
+junit-jupiter-params = { group = "org.junit.jupiter", name = "junit-jupiter-params", version.ref = "junit" }
+junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform-launcher" }
+
+
+[bundles]
+netty = [ "netty-common", "netty-buffer", "netty-codec", "netty-transport", "netty-transport-native-unix-common" ]
+junit = [ "junit-jupiter-engine", "junit-jupiter-api", "junit-jupiter-params" ]
+
+
+[plugins]
+nmcp = { id = "com.gradleup.nmcp", version.ref = "nmcp" }
+nmcp-aggregation = { id = "com.gradleup.nmcp.aggregation", version.ref = "nmcp" }

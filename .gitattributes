@@ -1,0 +1,21 @@
+# Normalise line endings so a Windows and a Linux contributor do not produce whole-file diffs
+# against each other. Everything git detects as text is stored LF and checked out natively.
+* text=auto
+
+# Shell scripts must stay LF even on Windows checkouts: CRLF makes them unrunnable on Linux.
+*.sh text eol=lf
+gradlew text eol=lf
+
+# Batch files are the mirror image.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never touch these.
+*.jar binary
+*.zip binary
+*.gz binary
+*.png binary
+*.jpg binary
+*.bin binary
+*.nbt binary
+*.whl binary

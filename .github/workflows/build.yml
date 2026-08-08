@@ -1,0 +1,52 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The build's own toolchain targets Java 17, resolved by the foojay plugin. 21 is what runs
+      # Gradle itself.
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Builds the proxy together with the vendored protocol and network modules it composite-
+      # includes, then runs the test suite.
+      - name: Build
+        run: ./gradlew build --no-daemon
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: Endlink.jar
+          path: dist/Endlink.jar
+          if-no-files-found: error
+
+      # Worth having even when the build is green: a failing test is the thing people actually want
+      # to read, and the summary is otherwise buried in the log.
+      - name: Test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: build/test-results/test/*.xml
+          if-no-files-found: ignore

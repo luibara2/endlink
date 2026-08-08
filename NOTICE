@@ -1,0 +1,39 @@
+Endlink
+Copyright 2026 luibara2
+
+This product includes software developed by third parties, vendored into this
+repository and used under the Apache License, Version 2.0. Their own copyright
+notices and licence texts are retained in their directories.
+
+--------------------------------------------------------------------------------
+protocol/  and  network/
+--------------------------------------------------------------------------------
+
+Bedrock protocol codecs and the RakNet/NetherNet transports.
+
+  Originally:  CloudburstMC Protocol   https://github.com/CloudburstMC/Protocol
+  Forked from: Kas-tle/Protocol        https://github.com/Kas-tle/Protocol
+               Kas-tle/Network         https://github.com/Kas-tle/Network
+  Licence:     Apache License 2.0 (see protocol/LICENSE and network/LICENSE)
+
+These are vendored rather than depended on because this project's copies differ
+substantially from upstream. As required by section 4(b) of the Apache License,
+the modifications carried here are:
+
+  * Added hand-written Bedrock codecs for protocol versions 944 (1.26.10),
+    975 (1.26.20), 1001 (1.26.30) and 2168 (1.26.40), each with the packet
+    serializers those releases changed. Upstream did not cover these versions.
+
+  * Corrected serializers where a version's wire format was wrong or absent,
+    including StartGame, LevelChunk, SubChunk, PlayerAuthInput, CraftingData,
+    CreativeContent, ItemStackRequest, PlayerList and the entity-data type maps.
+
+  * Fixed a direct-memory leak in SubChunkData: the render height map retained a
+    slice that was never released, leaking 256 bytes per sub-chunk carrying one.
+
+  * Removed upstream modules and sources this project does not use.
+
+--------------------------------------------------------------------------------
+
+Endlink's own source (everything outside protocol/ and network/) is licensed
+under the Apache License 2.0; see LICENSE.
