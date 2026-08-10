@@ -773,6 +773,17 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
                     loadingScreen.getType(),
                     loadingScreen.getLoadingScreenId()
             );
+        } else if (packet instanceof ResourcePackClientResponsePacket response) {
+            // The status is the whole content of this packet, and the backend's pack handshake is a
+            // strict order of them: without it a trace shows two identical lines and no way to tell a
+            // correct handshake from one that ends it early. A client that answers COMPLETED before
+            // HAVE_ALL_PACKS gets kicked for the trailing packet several seconds later, by which point
+            // nothing in the log still points here.
+            System.out.printf(
+                    "  ResourcePackClientResponse status=%s packs=%d.%n",
+                    response.getStatus(),
+                    response.getPackIds().size()
+            );
         }
     }
 
