@@ -44,6 +44,10 @@ On first start it writes a fully documented `config.properties` and creates a `p
   attempt windows, RakNet packet limits and optional connection cookies.
 - **An addon API.** Anything in `plugins/` is discovered at startup and can extend the proxy. With
   an empty `plugins/` folder, Endlink is exactly a Bedrock proxy and nothing else.
+- **Minecraft: Java Edition players — in beta**, through the optional
+  [ViaEndlink](https://github.com/luibara2/viaendlink) addon. Java clients join, chat and walk
+  around; they cannot open a chest yet. Read its status notice before relying on it. Endlink itself
+  does not need it and knows nothing about Java.
 
 ## Versions: run the latest, on both ends
 
@@ -120,6 +124,7 @@ Or enable it once for good: `git config --global core.longpaths true`.
 | | |
 | --- | --- |
 | [EndlinkGuard](https://github.com/luibara2/endlinkguard) | The backend plugin. Verifies proxy joins and rejects direct ones — install it on every backend |
+| [ViaEndlink](https://github.com/luibara2/viaendlink) | **Beta.** Optional addon for Minecraft: Java Edition players. Joining, chat and terrain work; containers do not — read its status notice first |
 | [Endstone](https://github.com/EndstoneMC/endstone) | The recommended backend server: plugin-capable Bedrock Dedicated Server |
 
 ## Licence
