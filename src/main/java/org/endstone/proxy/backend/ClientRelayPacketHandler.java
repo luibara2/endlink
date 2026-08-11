@@ -3,6 +3,7 @@ package org.endstone.proxy.backend;
 import io.netty.buffer.Unpooled;
 import io.netty.util.ReferenceCountUtil;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.UUID;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.math.vector.Vector3i;
@@ -12,8 +13,20 @@ import org.cloudburstmc.protocol.bedrock.data.PlayerActionType;
 import org.cloudburstmc.protocol.bedrock.data.PlayerBlockActionData;
 import org.cloudburstmc.protocol.bedrock.data.camera.AimAssistAction;
 import org.cloudburstmc.protocol.bedrock.data.command.CommandOriginData;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.ItemStackRequest;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.ItemStackRequestSlotData;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.ConsumeAction;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.CraftCreativeAction;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.CraftResultsDeprecatedAction;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.DestroyAction;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.DropAction;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.ItemStackRequestAction;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.RecipeItemStackRequestAction;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.SwapAction;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.TransferItemStackRequestAction;
 import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.ItemUseTransaction;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import org.cloudburstmc.protocol.bedrock.packet.ItemStackRequestPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
 import org.cloudburstmc.protocol.bedrock.packet.AnimatePacket;
 import org.cloudburstmc.protocol.bedrock.packet.CameraAimAssistInstructionPacket;
@@ -697,6 +710,14 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
                         authInput.getItemStackRequest() == null ? null : authInput.getItemStackRequest().getActions().length,
                         authInput.getPredictedVehicle()
                 );
+                // A vanilla Bedrock client puts its request here rather than sending the standalone
+                // packet, so without this the reference case -- what a real client does -- is the
+                // one case the trace cannot show.
+                logItemStackRequest(authInput.getItemStackRequest());
+            }
+        } else if (packet instanceof ItemStackRequestPacket stackRequest) {
+            for (ItemStackRequest request : stackRequest.getRequests()) {
+                logItemStackRequest(request);
             }
         } else if (packet instanceof InventoryTransactionPacket transaction) {
             System.out.printf(
@@ -894,6 +915,75 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
      */
     private boolean backendUsesLegacyDeathRespawn() {
         return connection.sessionProfile().backendCodec().getProtocolVersion() < 712;
+    }
+
+    /**
+     * Prints an {@code ItemStackRequest} in full.
+     *
+     * <p>In full because the server's answer is a single word. A request is accepted or rejected as
+     * a whole — {@code FailedToValidateSrcSlot}, with nothing about which of its actions or which
+     * slot — so the only way to tell a stale stack network id from a wrongly named container is to
+     * have the request itself sitting beside the response.</p>
+     */
+    private static void logItemStackRequest(ItemStackRequest request) {
+        if (request == null) {
+            return;
+        }
+        StringBuilder line = new StringBuilder("  ItemStackRequest id=").append(request.getRequestId());
+        for (ItemStackRequestAction action : request.getActions()) {
+            line.append("\n    ").append(action.getType()).append(' ').append(describeStackRequestAction(action));
+        }
+        System.out.println(line + ".");
+    }
+
+    /**
+     * One {@code ItemStackRequest} action, with the three fields the server validates it on.
+     *
+     * <p>A slot is named by its <em>kind</em> and its index within that kind, and carries the stack
+     * network id the client believes is there — and the server refuses the whole request if any of
+     * the three disagrees with its own view. All three therefore have to be visible; a rejection
+     * reason on its own cannot distinguish them.</p>
+     */
+    private static String describeStackRequestAction(ItemStackRequestAction action) {
+        if (action instanceof TransferItemStackRequestAction transfer) {
+            return "count=" + transfer.getCount()
+                    + " from=" + describeStackRequestSlot(transfer.getSource())
+                    + " to=" + describeStackRequestSlot(transfer.getDestination());
+        }
+        if (action instanceof SwapAction swap) {
+            return "from=" + describeStackRequestSlot(swap.getSource())
+                    + " to=" + describeStackRequestSlot(swap.getDestination());
+        }
+        if (action instanceof DropAction drop) {
+            return "count=" + drop.getCount() + " from=" + describeStackRequestSlot(drop.getSource())
+                    + " randomly=" + drop.isRandomly();
+        }
+        if (action instanceof DestroyAction destroy) {
+            return "count=" + destroy.getCount() + " from=" + describeStackRequestSlot(destroy.getSource());
+        }
+        if (action instanceof ConsumeAction consume) {
+            return "count=" + consume.getCount() + " from=" + describeStackRequestSlot(consume.getSource());
+        }
+        if (action instanceof CraftResultsDeprecatedAction results) {
+            return "timesCrafted=" + results.getTimesCrafted()
+                    + " results=" + Arrays.toString(results.getResultItems());
+        }
+        if (action instanceof RecipeItemStackRequestAction recipe) {
+            return "recipeNetworkId=" + recipe.getRecipeNetworkId()
+                    + " crafts=" + recipe.getNumberOfRequestedCrafts();
+        }
+        if (action instanceof CraftCreativeAction creative) {
+            return "creativeItemNetworkId=" + creative.getCreativeItemNetworkId()
+                    + " crafts=" + creative.getNumberOfRequestedCrafts();
+        }
+        return action.toString();
+    }
+
+    private static String describeStackRequestSlot(ItemStackRequestSlotData slot) {
+        if (slot == null) {
+            return "null";
+        }
+        return slot.getContainer() + "[" + slot.getSlot() + "] netId=" + slot.getStackNetworkId();
     }
 
     private static String describeItemUse(ItemUseTransaction transaction) {

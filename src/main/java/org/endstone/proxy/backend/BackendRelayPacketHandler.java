@@ -54,6 +54,10 @@ import org.cloudburstmc.protocol.bedrock.packet.SetEntityLinkPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetEntityMotionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetHealthPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetLocalPlayerAsInitializedPacket;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.response.ItemStackResponse;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.response.ItemStackResponseContainer;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.response.ItemStackResponseSlot;
+import org.cloudburstmc.protocol.bedrock.packet.ItemStackResponsePacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetPlayerInventoryOptionsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetPlayerGameTypePacket;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
@@ -2607,6 +2611,23 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
                     respawn.getRuntimeEntityId(),
                     respawn.getPosition()
             );
+        } else if (packet instanceof ItemStackResponsePacket stackResponse) {
+            // The other half of the ItemStackRequest trace in ClientRelayPacketHandler. A rejection
+            // names only the request id and a reason, so it is the request logged alongside that
+            // says what was refused; a success is worth having too, because the stack network ids it
+            // hands back are what the client has to quote in its next request.
+            for (ItemStackResponse response : stackResponse.getEntries()) {
+                StringBuilder line = new StringBuilder("  ItemStackResponse id=")
+                        .append(response.getRequestId()).append(" result=").append(response.getResult());
+                for (ItemStackResponseContainer container : response.getContainers()) {
+                    for (ItemStackResponseSlot slot : container.getItems()) {
+                        line.append("\n    ").append(container.getContainer())
+                                .append('[').append(slot.getSlot()).append("] count=").append(slot.getCount())
+                                .append(" netId=").append(slot.getStackNetworkId());
+                    }
+                }
+                System.out.println(line + ".");
+            }
         } else if (packet instanceof SetPlayerInventoryOptionsPacket inventoryOptions) {
             System.out.printf(
                     "  SetPlayerInventoryOptions left=%s right=%s filtering=%s layout=%s craftingLayout=%s.%n",
