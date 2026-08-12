@@ -11,6 +11,7 @@ import org.cloudburstmc.netty.handler.codec.raknet.server.RakServerRateLimiter;
 import org.cloudburstmc.protocol.bedrock.BedrockPeer;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
+import org.cloudburstmc.protocol.bedrock.netty.codec.batch.BedrockBatchDecoder;
 import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockServerInitializer;
 import org.endstone.proxy.auth.ClientLoginAuthenticator;
 import org.endstone.proxy.auth.OfflineLoginForge;
@@ -27,6 +28,7 @@ import org.endstone.proxy.config.ProxyConfig;
 import org.endstone.proxy.config.SecurityConfig;
 import org.endstone.proxy.network.LoggingExceptionHandler;
 import org.endstone.proxy.security.ConnectionThrottle;
+import org.endstone.proxy.security.PreAuthBatchLimiter;
 import org.endstone.proxy.protocol.ProtocolNegotiator;
 import org.endstone.proxy.protocol.ProtocolRegistry;
 import org.endstone.proxy.resource.ProxyResourcePackRegistry;
@@ -324,6 +326,15 @@ public final class BedrockProxyListener {
                             return;
                         }
                         listenerSession.setThrottled(trusted == null);
+                        // Bound what an anonymous peer can make the proxy allocate. Sits between the
+                        // compression codec and the batch decoder so it sees the decompressed size,
+                        // which is the number every downstream consumer scales its work off. Lifts
+                        // as soon as the login succeeds and setProxyConnection runs.
+                        listenerSession.getPeer().getChannel().pipeline().addBefore(
+                                BedrockBatchDecoder.NAME,
+                                PreAuthBatchLimiter.NAME,
+                                new PreAuthBatchLimiter(() -> listenerSession.proxyConnection() != null)
+                        );
                         listenerSession.getPeer().getChannel().pipeline().addLast(
                                 "endstone-client-exception-logger",
                                 new LoggingExceptionHandler("client")
