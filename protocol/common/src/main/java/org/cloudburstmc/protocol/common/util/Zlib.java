@@ -62,9 +62,13 @@ public class Zlib {
                     break;
                 }
                 decompressed.writerIndex(index + written);
-                // if (maxSize > 0 && decompressed.writerIndex() >= maxSize) {
-                //     throw new DataFormatException("Inflated data exceeds maximum size");
-                // }
+                if (maxSize > 0 && decompressed.writerIndex() > maxSize) {
+                    // Enforce the decompression cap the caller asked for. Without this an
+                    // unauthenticated client can send a small zlib batch that inflates without
+                    // bound (a "zip bomb"), forcing arbitrary heap allocation on an I/O thread
+                    // before login. The sibling SnappyCompression.decode enforces the same cap.
+                    throw new DataFormatException("Inflated data exceeds maximum size of " + maxSize + " bytes");
+                }
             }
             decompressed.retain();
             return decompressed;
