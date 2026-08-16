@@ -26,14 +26,21 @@ public final class ProxyCommandRegistry {
     }
 
     public Optional<ProxyCommand> find(String commandLine) {
-        String name = normalize(commandLine);
+        String name = commandName(commandLine);
         if (name.isEmpty()) {
             return Optional.empty();
         }
         return Optional.ofNullable(commands.get(name));
     }
 
-    private static String normalize(String commandLine) {
+    /**
+     * The command name a client typed, without its leading slash, its arguments or its case.
+     *
+     * <p>Public because the interceptor has to read the name before it can decide who handles the
+     * line — a name a backend has taken over is forwarded rather than looked up here — and two
+     * copies of this parsing that disagreed would route a command one way and log it another.</p>
+     */
+    public static String commandName(String commandLine) {
         if (commandLine == null) {
             return "";
         }

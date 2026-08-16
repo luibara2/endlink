@@ -14,6 +14,7 @@ import org.endstone.proxy.command.AvailableCommandsInjector;
 import org.endstone.proxy.command.ProxyCommandInterceptor;
 import org.endstone.proxy.command.ProxyCommandRegistry;
 import org.endstone.proxy.command.ProxyPlayerEnum;
+import org.endstone.proxy.config.CommandsConfig;
 import org.endstone.proxy.permission.ProxyPermissions;
 import org.endstone.proxy.crypto.BedrockCrypto;
 import org.endstone.proxy.verification.PendingJoin;
@@ -45,6 +46,9 @@ public final class BackendInitialPacketHandler implements BedrockPacketHandler {
     private final JoinFailover joinFailover;
     private final ProxyPermissions permissions;
     private final ProxyPlayerEnum playerEnum;
+    private final CommandsConfig commandsConfig;
+    /** The command names this backend has taken over; resolved once, since backendName is fixed. */
+    private final java.util.Set<String> passthroughCommands;
     private PendingJoin pendingJoin;
     private boolean warnedPreHandshakeDisconnect;
 
@@ -63,7 +67,8 @@ public final class BackendInitialPacketHandler implements BedrockPacketHandler {
             BackendFailover failover,
             JoinFailover joinFailover,
             ProxyPermissions permissions,
-            ProxyPlayerEnum playerEnum
+            ProxyPlayerEnum playerEnum,
+            CommandsConfig commandsConfig
     ) {
         this.connection = connection;
         this.backend = backend;
@@ -80,6 +85,8 @@ public final class BackendInitialPacketHandler implements BedrockPacketHandler {
         this.joinFailover = joinFailover;
         this.permissions = permissions;
         this.playerEnum = playerEnum;
+        this.commandsConfig = commandsConfig == null ? CommandsConfig.defaults() : commandsConfig;
+        this.passthroughCommands = this.commandsConfig.passthroughFor(backendName);
     }
 
     @Override
@@ -200,7 +207,7 @@ public final class BackendInitialPacketHandler implements BedrockPacketHandler {
                     new AvailableCommandsInjector(
                             commandRegistry,
                             visibleBackendNames(),
-                            this::mayUseCommand,
+                            this::advertiseCommand,
                             playerEnum
                     ),
                     verifiedXuidLookup,
@@ -212,7 +219,11 @@ public final class BackendInitialPacketHandler implements BedrockPacketHandler {
             activation.onReady(backend);
             connection.client().setPacketHandler(new ClientRelayPacketHandler(
                     connection,
-                    new ProxyCommandInterceptor(commandRegistry),
+                    new ProxyCommandInterceptor(
+                            commandRegistry,
+                            passthroughCommands,
+                            commandsConfig.qualifier()
+                    ),
                     commandRouter
             ));
             System.out.printf("Connected player %s to backend %s.%n",
@@ -245,13 +256,23 @@ public final class BackendInitialPacketHandler implements BedrockPacketHandler {
         );
     }
 
-    /** Keeps admin commands out of a player's autocomplete; the router still re-checks on execution. */
-    private boolean mayUseCommand(String commandName) {
-        return permissions.allows(
-                connection.clientLogin().authData().xuid(),
-                connection.clientLogin().authData().displayName(),
-                commandName
-        );
+    /**
+     * Whether a proxy command belongs in this player's command tree on this backend.
+     *
+     * <p>Two separate reasons to leave one out. An admin command is hidden from a player who may not
+     * run it — cosmetic only, since the client can send any line it likes and the router re-checks on
+     * execution. A command this backend has taken over is hidden because the backend registers that
+     * name itself: injecting the proxy's entry alongside would either be dropped by the injector's
+     * de-duplication or, worse, advertise proxy semantics for a name the proxy is going to
+     * forward.</p>
+     */
+    private boolean advertiseCommand(String commandName) {
+        return !passthroughCommands.contains(commandName.toLowerCase(Locale.ROOT))
+                && permissions.allows(
+                        connection.clientLogin().authData().xuid(),
+                        connection.clientLogin().authData().displayName(),
+                        commandName
+                );
     }
 
     /**

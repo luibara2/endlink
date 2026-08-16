@@ -103,6 +103,10 @@ public record ProxyConfig(
         return policy.join();
     }
 
+    public CommandsConfig commands() {
+        return policy.commands();
+    }
+
     /**
      * The documented config template, shipped inside the jar by {@code processResources}.
      *
@@ -204,7 +208,10 @@ public record ProxyConfig(
                                 .toList()),
                         SecurityConfig.from(properties),
                         forcedHostsConfig(properties, backends),
-                        JoinConfig.from(properties, failover)
+                        JoinConfig.from(properties, failover),
+                        CommandsConfig.from(properties, backends.values().stream()
+                                .map(BackendConfig::name)
+                                .toList())
                 ),
                 properties.getProperty("motd", "Endstone Proxy"),
                 properties.getProperty("subMotd", defaultSubMotd),
@@ -250,6 +257,8 @@ public record ProxyConfig(
         properties.setProperty("permissions.admins", "");
         properties.setProperty("permissions.adminCommands", String.join(",",
                 new java.util.TreeSet<>(PermissionsConfig.DEFAULT_ADMIN_COMMANDS)));
+        properties.setProperty("commands.passthrough", "");
+        properties.setProperty("commands.qualifier", CommandsConfig.DEFAULT_QUALIFIER);
         SecurityConfig securityDefaults = SecurityConfig.defaults();
         properties.setProperty("security.rateLimit.enabled", Boolean.toString(securityDefaults.rateLimitEnabled()));
         properties.setProperty("security.rateLimit.packetLimit", Integer.toString(securityDefaults.packetLimit()));

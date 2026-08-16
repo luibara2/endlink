@@ -379,7 +379,8 @@ public final class BackendConnector {
                                 failover,
                                 joinFailover,
                                 permissions,
-                                playerEnum
+                                playerEnum,
+                                policy.commands()
                         ));
                     }
                 })

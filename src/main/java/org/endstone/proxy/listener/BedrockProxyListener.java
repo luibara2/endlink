@@ -251,6 +251,24 @@ public final class BedrockProxyListener {
             config.forcedHosts().byHostname().forEach((hostname, backend) ->
                     System.out.printf("Forced host %s -> backend %s.%n", hostname, backend));
         }
+        // A command the proxy has given away answers differently depending on where the player is
+        // standing, which is impossible to diagnose from a bug report. Say so once at startup.
+        if (!config.commands().isEmpty()) {
+            for (String backendName : config.backends().values().stream()
+                    .map(org.endstone.proxy.config.BackendConfig::name)
+                    .toList()) {
+                java.util.Set<String> passthrough = config.commands().passthroughFor(backendName);
+                if (!passthrough.isEmpty()) {
+                    System.out.printf(
+                            "Backend %s handles /%s itself; the proxy forwards them there and does not"
+                                    + " advertise its own. Use /%s<name> to reach the proxy's anywhere.%n",
+                            backendName,
+                            String.join(", /", new java.util.TreeSet<>(passthrough)),
+                            config.commands().qualifier()
+                    );
+                }
+            }
+        }
         console.start();
         System.out.printf(
                 "Endlink listening on %s:%d as '%s' for Bedrock %s (protocol %d), backend protocol %s. Backend placeholder: %s %s.%n",

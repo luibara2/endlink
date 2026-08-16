@@ -4,7 +4,7 @@ package org.endstone.proxy.config;
  * The policy half of the configuration — the settings that decide what the proxy <em>does</em>, as
  * opposed to the addresses and codecs it needs to run at all.
  *
- * <p>Bundled because the same five records are needed together everywhere a connection is set up,
+ * <p>Bundled because the same records are needed together everywhere a connection is set up,
  * and threading them individually through {@code BackendConnector} into every packet handler adds a
  * parameter per feature.</p>
  */
@@ -14,7 +14,8 @@ public record ProxyPolicy(
         PermissionsConfig permissions,
         SecurityConfig security,
         ForcedHostsConfig forcedHosts,
-        JoinConfig join
+        JoinConfig join,
+        CommandsConfig commands
 ) {
     public ProxyPolicy {
         if (failover == null) {
@@ -35,6 +36,9 @@ public record ProxyPolicy(
         if (join == null) {
             throw new IllegalArgumentException("join cannot be null");
         }
+        if (commands == null) {
+            throw new IllegalArgumentException("commands cannot be null");
+        }
     }
 
     public static ProxyPolicy defaults() {
@@ -44,7 +48,8 @@ public record ProxyPolicy(
                 PermissionsConfig.defaults(),
                 SecurityConfig.defaults(),
                 ForcedHostsConfig.empty(),
-                JoinConfig.defaults()
+                JoinConfig.defaults(),
+                CommandsConfig.defaults()
         );
     }
 }
