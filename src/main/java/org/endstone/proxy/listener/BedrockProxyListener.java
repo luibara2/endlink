@@ -29,8 +29,11 @@ import org.endstone.proxy.config.SecurityConfig;
 import org.endstone.proxy.network.LoggingExceptionHandler;
 import org.endstone.proxy.security.ConnectionThrottle;
 import org.endstone.proxy.security.PreAuthBatchLimiter;
+import org.endstone.proxy.security.RateLimitReporter;
 import org.endstone.proxy.protocol.ProtocolNegotiator;
 import org.endstone.proxy.protocol.ProtocolRegistry;
+import org.endstone.proxy.palette.BackendPaletteStore;
+import org.endstone.proxy.resource.BackendPackCache;
 import org.endstone.proxy.resource.ProxyResourcePackRegistry;
 import org.endstone.proxy.session.ConnectedPlayerRegistry;
 import org.endstone.proxy.verification.BackendVerificationServer;
@@ -39,6 +42,7 @@ import org.endstone.proxy.verification.PendingJoinRegistry;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.time.Clock;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
@@ -59,6 +63,8 @@ public final class BedrockProxyListener {
     private final ProxyPermissions permissions;
     private ProxyConsole console;
     private Channel channel;
+    private BackendPaletteStore backendPaletteStore = BackendPaletteStore.disabled();
+    private BackendPackCache backendPackCache = BackendPackCache.disabled();
     private final java.util.List<Channel> trustedChannels = new java.util.ArrayList<>();
     private final PluginManager pluginManager;
 
@@ -138,10 +144,34 @@ public final class BedrockProxyListener {
                 config.backend().name(),
                 config.hubBackendName()
         );
-        ProxyResourcePackRegistry resourcePackRegistry = ProxyResourcePackRegistry.load(config.resourcePacksDir());
+        ProxyResourcePackRegistry resourcePackRegistry = config.cacheBackendPacks()
+                ? ProxyResourcePackRegistry.load(config.resourcePacksDir(), config.backendPackCacheDir())
+                : ProxyResourcePackRegistry.load(config.resourcePacksDir());
+        backendPackCache = config.cacheBackendPacks()
+                ? BackendPackCache.of(config.backendPackCacheDir(), resourcePackRegistry)
+                : BackendPackCache.disabled();
         if (!resourcePackRegistry.isEmpty()) {
             System.out.printf("Proxy resource pack registry: %d pack(s) loaded.%n",
                     resourcePackRegistry.packs().size());
+        }
+        backendPaletteStore = config.crossBackendPalette()
+                ? BackendPaletteStore.load(config.crossBackendPaletteCacheFile())
+                : BackendPaletteStore.disabled();
+        if (config.crossBackendPalette()) {
+            System.out.printf("Cross-backend item and entity registries on (%s).%n", backendPaletteStore.describe());
+            // A backend nobody has visited yet contributes nothing to a joining client's registries,
+            // so its custom content is wrong for anyone who switches there before it is learned.
+            List<String> unlearned = config.backends().keySet().stream()
+                    .filter(name -> !backendPaletteStore.knownBackends().contains(name))
+                    .sorted()
+                    .toList();
+            if (!unlearned.isEmpty()) {
+                System.out.printf(
+                        "Backends not learned yet: %s. Their custom items and entities render correctly only "
+                                + "for players who log in after someone has been there once.%n",
+                        String.join(", ", unlearned)
+                );
+            }
         }
         OfflineLoginForge offlineLoginForge = new OfflineLoginForge();
         BackendConnector backendConnector = new BackendConnector(
@@ -322,6 +352,9 @@ public final class BedrockProxyListener {
                         trusted != null ? Integer.MAX_VALUE : security.packetLimit())
                 .option(RakChannelOption.RAK_GLOBAL_PACKET_LIMIT,
                         trusted != null ? Integer.MAX_VALUE : security.globalPacketLimit())
+                // The limiter's own log line says neither which setting blocked the address nor that
+                // the block lasts ten seconds, which is long enough to turn a join into a timeout.
+                .option(RakChannelOption.RAK_SERVER_METRICS, new RateLimitReporter(security.packetLimit()))
                 // Off by default in this RakNet build. With it on, the handshake proves the client
                 // can receive at its claimed address, which is what makes a spoofed source IP
                 // useless for opening sessions.
@@ -375,7 +408,9 @@ public final class BedrockProxyListener {
                                 offlineLoginForge,
                                 connectedPlayers,
                                 BedrockProxyListener.this::onPlayerRosterChanged,
-                                resourcePackRegistry
+                                resourcePackRegistry,
+                                backendPaletteStore,
+                                backendPackCache
                         ));
                         updateAdvertisement();
                     }

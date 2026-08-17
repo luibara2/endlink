@@ -40,6 +40,13 @@ On first start it writes a fully documented `config.properties` and creates a `p
   below before relying on it.
 - **Failover and forced hosts.** A dead backend moves players rather than dropping them; a hostname
   can route to a specific backend.
+- **Addon content that survives the switch.** Bedrock reads a client's resource packs, item registry,
+  entity list and block definitions once, at level init, and a seamless switch does not re-run it —
+  so without help, a backend's custom items draw arbitrary vanilla textures and its custom entities
+  and blocks are invisible to anyone who arrived from somewhere else. Endlink serves packs from
+  `resourcePacks.dir` and caches each backend's own packs as it learns them, and gives every client
+  the combined registries of all backends, translating each backend's network ids to match. See
+  `resourcePacks.cacheBackendPacks` and `crossBackendPalette` in the config.
 - **Rate limiting and abuse controls** on the public listener: per-address session caps, connection
   attempt windows, RakNet packet limits and optional connection cookies.
 - **An addon API.** Anything in `plugins/` is discovered at startup and can extend the proxy. With
@@ -80,6 +87,9 @@ The settings worth knowing before a first run:
 | `backendVerification.sharedSecret` | Must match EndlinkGuard's `shared_secret` on every backend |
 | `permissions.admins` | XUIDs allowed to run `/send`, `/alert`, `/glist`, `/perm` |
 | `backend.protocol` | Leave `auto` — it reads the version from the backend rather than trusting a pinned value |
+| `resourcePacks.dir` | Packs every client gets at login, as `.mcpack` files or unpacked folders |
+| `resourcePacks.cacheBackendPacks` | Learns each backend's packs into `cache/packs` and serves them itself, so packs work after a switch without copying them into the directory above. The first player to switch to an unlearned backend waits for one download |
+| `crossBackendPalette` | Leave on if any backend has custom items or entities — it is what keeps them rendering after a switch. The proxy learns each backend's registry on the first visit and caches it in `cache/backend-palettes.nbt`; after an addon change, the first player there sees the old registry until they rejoin |
 
 ## Backends
 

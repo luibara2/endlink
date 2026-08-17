@@ -6,6 +6,9 @@ import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.endstone.proxy.auth.ClientLogin;
 import org.endstone.proxy.config.BackendConfig;
+import org.endstone.proxy.palette.BackendPaletteStore;
+import org.endstone.proxy.palette.CrossBackendPalette;
+import org.endstone.proxy.resource.BackendPackCache;
 import org.endstone.proxy.resource.ProxyResourcePackRegistry;
 import org.endstone.proxy.session.ProxySessionProfile;
 
@@ -38,6 +41,8 @@ public final class ProxyConnection {
     private final KeyPair keyPair;
     private LoginPacket backendLogin;
     private final ProxyResourcePackRegistry proxyResourcePackRegistry;
+    private final BackendPackCache backendPackCache;
+    private final CrossBackendPalette crossBackendPalette;
     private final ClientWorldState clientWorldState = new ClientWorldState();
     private BackendSession backend;
     private String backendName;
@@ -99,6 +104,32 @@ public final class ProxyConnection {
             LoginPacket backendLogin,
             ProxyResourcePackRegistry proxyResourcePackRegistry
     ) {
+        this(client, sessionProfile, clientLogin, keyPair, backendLogin, proxyResourcePackRegistry, null);
+    }
+
+    public ProxyConnection(
+            org.endstone.proxy.listener.ListenerSession client,
+            ProxySessionProfile sessionProfile,
+            ClientLogin clientLogin,
+            KeyPair keyPair,
+            LoginPacket backendLogin,
+            ProxyResourcePackRegistry proxyResourcePackRegistry,
+            BackendPaletteStore backendPaletteStore
+    ) {
+        this(client, sessionProfile, clientLogin, keyPair, backendLogin, proxyResourcePackRegistry,
+                backendPaletteStore, null);
+    }
+
+    public ProxyConnection(
+            org.endstone.proxy.listener.ListenerSession client,
+            ProxySessionProfile sessionProfile,
+            ClientLogin clientLogin,
+            KeyPair keyPair,
+            LoginPacket backendLogin,
+            ProxyResourcePackRegistry proxyResourcePackRegistry,
+            BackendPaletteStore backendPaletteStore,
+            BackendPackCache backendPackCache
+    ) {
         this.client = client;
         this.sessionProfile = sessionProfile;
         this.clientLogin = clientLogin;
@@ -107,6 +138,8 @@ public final class ProxyConnection {
         this.proxyResourcePackRegistry = proxyResourcePackRegistry != null
                 ? proxyResourcePackRegistry
                 : ProxyResourcePackRegistry.empty();
+        this.crossBackendPalette = new CrossBackendPalette(backendPaletteStore);
+        this.backendPackCache = backendPackCache != null ? backendPackCache : BackendPackCache.disabled();
     }
 
     public org.endstone.proxy.listener.ListenerSession client() {
@@ -160,6 +193,22 @@ public final class ProxyConnection {
 
     public ProxyResourcePackRegistry proxyResourcePackRegistry() {
         return proxyResourcePackRegistry;
+    }
+
+    /**
+     * Where backend packs seen on this connection are kept. Shared by every connection: a pack learned
+     * from one player is served to all of them.
+     */
+    public BackendPackCache backendPackCache() {
+        return backendPackCache;
+    }
+
+    /**
+     * This player's cross-backend item and entity registries. Decided at login and unchangeable
+     * afterwards, because that is when Bedrock reads them; see {@link CrossBackendPalette}.
+     */
+    public CrossBackendPalette crossBackendPalette() {
+        return crossBackendPalette;
     }
 
     public synchronized BackendSession backend() {

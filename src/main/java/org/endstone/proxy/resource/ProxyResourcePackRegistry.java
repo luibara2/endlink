@@ -9,6 +9,7 @@ import org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket;
 import org.endstone.proxy.listener.ListenerSession;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -20,14 +21,27 @@ import java.util.*;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 public final class ProxyResourcePackRegistry {
     private static final ProxyResourcePackRegistry EMPTY = new ProxyResourcePackRegistry(Collections.emptyList());
+    private static final String MANIFEST = "manifest.json";
+    /** 2000-01-01T00:00:00Z. Any fixed value inside the DOS-time range keeps folder zips reproducible. */
+    private static final long ZIP_TIMESTAMP = 946684800000L;
 
-    private final List<ProxyResourcePackEntry> packs;
-    private final Map<UUID, ProxyResourcePackEntry> packsByUuid;
+    /**
+     * Read on every join and written when a backend's pack is learned, so both are snapshots swapped
+     * under a lock rather than collections mutated in place: a join in flight keeps the set it
+     * started with instead of seeing half an update.
+     */
+    private volatile List<ProxyResourcePackEntry> packs;
+    private volatile Map<UUID, ProxyResourcePackEntry> packsByUuid;
 
     private ProxyResourcePackRegistry(List<ProxyResourcePackEntry> packs) {
+        install(packs);
+    }
+
+    private void install(List<ProxyResourcePackEntry> packs) {
         this.packs = Collections.unmodifiableList(new ArrayList<>(packs));
         Map<UUID, ProxyResourcePackEntry> map = new LinkedHashMap<>();
         for (ProxyResourcePackEntry pack : packs) {
@@ -40,22 +54,91 @@ public final class ProxyResourcePackRegistry {
         return EMPTY;
     }
 
+    /** A registry that starts empty but can still learn packs; see {@link #add}. */
+    public static ProxyResourcePackRegistry mutableEmpty() {
+        return new ProxyResourcePackRegistry(Collections.emptyList());
+    }
+
+    /**
+     * Adds a pack learned at runtime, keeping the newer of the two when the uuid is already known.
+     *
+     * <p>Refused on the shared {@link #EMPTY} instance, which every packless proxy holds: adding to it
+     * would hand one connection's packs to every other.</p>
+     *
+     * @return true when the registry changed
+     */
+    public synchronized boolean add(ProxyResourcePackEntry entry) {
+        if (this == EMPTY || entry == null) {
+            return false;
+        }
+        ProxyResourcePackEntry existing = packsByUuid.get(entry.uuid());
+        if (existing != null && compareVersions(existing.version(), entry.version()) >= 0) {
+            return false;
+        }
+        List<ProxyResourcePackEntry> updated = new ArrayList<>(packs.size() + 1);
+        for (ProxyResourcePackEntry pack : packs) {
+            if (!pack.uuid().equals(entry.uuid())) {
+                updated.add(pack);
+            }
+        }
+        updated.add(entry);
+        install(updated);
+        return true;
+    }
+
+    /** Reads a pack from bytes exactly as a {@code .mcpack} on disk would be read. */
+    public static ProxyResourcePackEntry entryFrom(byte[] data) {
+        ManifestInfo manifest = parseManifest(data);
+        if (manifest == null) {
+            return null;
+        }
+        return new ProxyResourcePackEntry(manifest.uuid(), manifest.version(), manifest.name(), data, sha256(data));
+    }
+
+    /**
+     * Loads the operator's packs plus the ones cached from backends, into a registry that can still
+     * learn more while the proxy runs.
+     *
+     * <p>A pack placed in {@code dir} by hand wins a tie against the cached copy of the same version:
+     * it is the one an operator can actually edit.</p>
+     */
+    public static ProxyResourcePackRegistry load(Path dir, Path cacheDir) {
+        ProxyResourcePackRegistry registry = mutableEmpty();
+        for (ProxyResourcePackEntry entry : loadEntries(dir, "")) {
+            registry.add(entry);
+        }
+        for (ProxyResourcePackEntry entry : loadEntries(cacheDir, ", cached from a backend")) {
+            registry.add(entry);
+        }
+        return registry;
+    }
+
     public static ProxyResourcePackRegistry load(Path dir) {
-        if (dir == null || !Files.isDirectory(dir)) {
+        List<ProxyResourcePackEntry> loaded = loadEntries(dir, "");
+        if (loaded.isEmpty()) {
             return EMPTY;
+        }
+        return new ProxyResourcePackRegistry(loaded);
+    }
+
+    private static List<ProxyResourcePackEntry> loadEntries(Path dir, String origin) {
+        if (dir == null || !Files.isDirectory(dir)) {
+            return List.of();
         }
         List<ProxyResourcePackEntry> loaded = new ArrayList<>();
         try (Stream<Path> paths = Files.list(dir)) {
-            paths.filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".mcpack"))
+            paths.filter(ProxyResourcePackRegistry::looksLikePack)
                     .sorted()
                     .forEach(p -> {
                         try {
-                            ProxyResourcePackEntry entry = loadPack(p);
+                            ProxyResourcePackEntry entry = Files.isDirectory(p) ? loadFolderPack(p) : loadPack(p);
                             if (entry != null) {
                                 loaded.add(entry);
                                 System.out.printf(
-                                        "Loaded proxy resource pack: %s v%s (uuid=%s, %d bytes).%n",
-                                        entry.name(), entry.versionString(), entry.uuid(), entry.data().length
+                                        "Loaded proxy resource pack: %s v%s (uuid=%s, %d bytes%s%s).%n",
+                                        entry.name(), entry.versionString(), entry.uuid(), entry.data().length,
+                                        Files.isDirectory(p) ? ", zipped from folder" : "",
+                                        origin
                                 );
                             }
                         } catch (Exception e) {
@@ -64,12 +147,18 @@ public final class ProxyResourcePackRegistry {
                     });
         } catch (IOException e) {
             System.out.printf("Failed to list proxy resource packs directory %s: %s%n", dir, e.getMessage());
-            return EMPTY;
+            return List.of();
         }
-        if (loaded.isEmpty()) {
-            return EMPTY;
+        return loaded;
+    }
+
+    /** A packaged pack file, or a directory that could hold an unpackaged one. */
+    private static boolean looksLikePack(Path path) {
+        if (Files.isDirectory(path)) {
+            return true;
         }
-        return new ProxyResourcePackRegistry(loaded);
+        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+        return name.endsWith(".mcpack") || name.endsWith(".zip");
     }
 
     private static ProxyResourcePackEntry loadPack(Path path) throws Exception {
@@ -81,6 +170,85 @@ public final class ProxyResourcePackRegistry {
         }
         byte[] hash = sha256(data);
         return new ProxyResourcePackEntry(manifest.uuid(), manifest.version(), manifest.name(), data, hash);
+    }
+
+    /**
+     * Load an unpackaged pack: a directory holding manifest.json, zipped in memory so the rest of
+     * the pipeline sees exactly what a .mcpack would have given it.
+     *
+     * <p>The zip is built deterministically — entries sorted, one fixed timestamp — so a pack that
+     * did not change on disk keeps the same SHA-256 across restarts and clients do not redownload it.
+     */
+    private static ProxyResourcePackEntry loadFolderPack(Path dir) throws Exception {
+        Path root = findManifestRoot(dir);
+        if (root == null) {
+            // Not every directory beside the packs is a pack; say nothing about the ones that aren't.
+            return null;
+        }
+        ManifestInfo manifest = parseManifestJson(Files.readString(root.resolve(MANIFEST), StandardCharsets.UTF_8));
+        if (manifest == null) {
+            System.out.printf("Skipping %s: manifest.json is not a valid pack manifest.%n", dir.getFileName());
+            return null;
+        }
+        byte[] data = zipDirectory(root);
+        return new ProxyResourcePackEntry(manifest.uuid(), manifest.version(), manifest.name(), data, sha256(data));
+    }
+
+    /**
+     * The directory the zip should be rooted at: the folder itself when manifest.json sits in it, or
+     * its single subdirectory when the pack was unpacked one level down (the shape you get from
+     * extracting a .mcpack that wrapped its contents in a folder).
+     */
+    private static Path findManifestRoot(Path dir) throws IOException {
+        if (Files.isRegularFile(dir.resolve(MANIFEST))) {
+            return dir;
+        }
+        List<Path> children;
+        try (Stream<Path> paths = Files.list(dir)) {
+            children = paths.sorted().toList();
+        }
+        Path nested = null;
+        for (Path child : children) {
+            if (Files.isDirectory(child) && Files.isRegularFile(child.resolve(MANIFEST))) {
+                if (nested != null) {
+                    // Several packs side by side: ambiguous, and picking one would hide the others.
+                    System.out.printf(
+                            "Skipping %s: it holds several packs; move each one into %s directly.%n",
+                            dir.getFileName(), dir.getParent() == null ? "the packs directory" : dir.getParent().getFileName()
+                    );
+                    return null;
+                }
+                nested = child;
+            }
+        }
+        return nested;
+    }
+
+    private static byte[] zipDirectory(Path root) throws IOException {
+        List<Path> files;
+        try (Stream<Path> paths = Files.walk(root)) {
+            files = paths.filter(Files::isRegularFile)
+                    .filter(p -> !isJunk(p.getFileName().toString()))
+                    .sorted()
+                    .toList();
+        }
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(buffer)) {
+            for (Path file : files) {
+                String name = root.relativize(file).toString().replace('\\', '/');
+                ZipEntry entry = new ZipEntry(name);
+                entry.setTime(ZIP_TIMESTAMP);
+                zip.putNextEntry(entry);
+                Files.copy(file, zip);
+                zip.closeEntry();
+            }
+        }
+        return buffer.toByteArray();
+    }
+
+    private static boolean isJunk(String fileName) {
+        return fileName.equals(".DS_Store") || fileName.equalsIgnoreCase("Thumbs.db")
+                || fileName.equalsIgnoreCase("desktop.ini");
     }
 
     private static ManifestInfo parseManifest(byte[] zipData) {
@@ -380,7 +548,7 @@ public final class ProxyResourcePackRegistry {
 
     // ---- version helpers ----
 
-    static int[] parseVersion(String version) {
+    public static int[] parseVersion(String version) {
         if (version == null || version.isEmpty()) return new int[]{0, 0, 0};
         String[] parts = version.split("\\.", -1);
         int[] result = {0, 0, 0};
@@ -393,7 +561,7 @@ public final class ProxyResourcePackRegistry {
         return result;
     }
 
-    static int compareVersions(int[] a, int[] b) {
+    public static int compareVersions(int[] a, int[] b) {
         for (int i = 0; i < 3; i++) {
             int cmp = Integer.compare(a[i], b[i]);
             if (cmp != 0) return cmp;

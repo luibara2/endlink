@@ -69,7 +69,13 @@ public record SecurityConfig(
     }
 
     public static SecurityConfig defaults() {
-        return new SecurityConfig(true, 120, 100_000, true, 5, 8, 10_000, true, 1_000);
+        // packetLimit is 500, not RakNet's own 120. 120 is a limit for a server that only plays the
+        // game; a proxy also pushes resource packs, and both a login burst and a pack download are
+        // answered by more than 120 datagrams inside one 10ms tick over loopback or a LAN. Tripping
+        // it blocks the address for ten seconds, which turns the join into disconnect.timeout and
+        // then repeats on every retry, so the default value made a legitimate player unable to join
+        // at all. 500 still bounds one address to a small fraction of the global limit.
+        return new SecurityConfig(true, 500, 100_000, true, 5, 8, 10_000, true, 1_000);
     }
 
     public static SecurityConfig from(Properties properties) {

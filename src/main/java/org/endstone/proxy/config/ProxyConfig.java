@@ -32,7 +32,11 @@ public record ProxyConfig(
         int maxPlayers,
         PacketCompressionAlgorithm compressionAlgorithm,
         int compressionThreshold,
-        Path resourcePacksDir
+        Path resourcePacksDir,
+        boolean cacheBackendPacks,
+        Path backendPackCacheDir,
+        boolean crossBackendPalette,
+        Path crossBackendPaletteCacheFile
 ) {
     private static final String DEFAULT_LISTEN_HOST = "0.0.0.0";
     private static final int DEFAULT_LISTEN_PORT = 19132;
@@ -183,6 +187,15 @@ public record ProxyConfig(
             resourcePacksDir = resolved.toAbsolutePath().normalize();
         }
 
+        boolean cacheBackendPacks = booleanProperty(properties, "resourcePacks.cacheBackendPacks", true);
+        Path backendPackCacheDir = configDir != null
+                ? configDir.resolve("cache").resolve("packs").toAbsolutePath().normalize()
+                : null;
+        boolean crossBackendPalette = booleanProperty(properties, "crossBackendPalette", true);
+        Path crossBackendPaletteCacheFile = configDir != null
+                ? configDir.resolve("cache").resolve("backend-palettes.nbt").toAbsolutePath().normalize()
+                : null;
+
         FailoverConfig failover = failoverConfig(properties, backends, hubBackendName);
         return new ProxyConfig(
                 new InetSocketAddress(listenHost, listenPort),
@@ -219,7 +232,11 @@ public record ProxyConfig(
                 intProperty(properties, "maxPlayers", 20),
                 compression(properties.getProperty("compression", "zlib")),
                 intProperty(properties, "compressionThreshold", 0),
-                resourcePacksDir
+                resourcePacksDir,
+                cacheBackendPacks,
+                backendPackCacheDir,
+                crossBackendPalette,
+                crossBackendPaletteCacheFile
         );
     }
 
@@ -282,6 +299,8 @@ public record ProxyConfig(
         properties.setProperty("compression", "zlib");
         properties.setProperty("compressionThreshold", "0");
         properties.setProperty("resourcePacks.dir", "");
+        properties.setProperty("resourcePacks.cacheBackendPacks", "true");
+        properties.setProperty("crossBackendPalette", "true");
         return properties;
     }
 

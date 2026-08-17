@@ -18,6 +18,8 @@ import org.endstone.proxy.network.NetworkSettingsNegotiationResult;
 import org.endstone.proxy.network.NetworkSettingsNegotiator;
 import org.endstone.proxy.protocol.CanonicalProtocol;
 import org.endstone.proxy.protocol.IdentityTranslator898;
+import org.endstone.proxy.palette.BackendPaletteStore;
+import org.endstone.proxy.resource.BackendPackCache;
 import org.endstone.proxy.resource.ProxyResourcePackRegistry;
 import org.endstone.proxy.session.ProxySessionProfile;
 import org.endstone.proxy.session.ConnectedPlayerRegistry;
@@ -34,6 +36,8 @@ public final class InitialClientPacketHandler implements BedrockPacketHandler {
     private final ConnectedPlayerRegistry connectedPlayers;
     private final Runnable playerCountChanged;
     private final ProxyResourcePackRegistry proxyResourcePackRegistry;
+    private final BackendPaletteStore backendPaletteStore;
+    private final BackendPackCache backendPackCache;
     private SecretKey clientEncryptionKey;
     private ProxyConnection connection;
 
@@ -60,6 +64,38 @@ public final class InitialClientPacketHandler implements BedrockPacketHandler {
             Runnable playerCountChanged,
             ProxyResourcePackRegistry proxyResourcePackRegistry
     ) {
+        this(session, networkSettingsNegotiator, backendConnector, authenticator, offlineLoginForge,
+                connectedPlayers, playerCountChanged, proxyResourcePackRegistry, BackendPaletteStore.disabled());
+    }
+
+    public InitialClientPacketHandler(
+            ListenerSession session,
+            NetworkSettingsNegotiator networkSettingsNegotiator,
+            BackendConnector backendConnector,
+            ClientLoginAuthenticator authenticator,
+            OfflineLoginForge offlineLoginForge,
+            ConnectedPlayerRegistry connectedPlayers,
+            Runnable playerCountChanged,
+            ProxyResourcePackRegistry proxyResourcePackRegistry,
+            BackendPaletteStore backendPaletteStore
+    ) {
+        this(session, networkSettingsNegotiator, backendConnector, authenticator, offlineLoginForge,
+                connectedPlayers, playerCountChanged, proxyResourcePackRegistry, backendPaletteStore,
+                BackendPackCache.disabled());
+    }
+
+    public InitialClientPacketHandler(
+            ListenerSession session,
+            NetworkSettingsNegotiator networkSettingsNegotiator,
+            BackendConnector backendConnector,
+            ClientLoginAuthenticator authenticator,
+            OfflineLoginForge offlineLoginForge,
+            ConnectedPlayerRegistry connectedPlayers,
+            Runnable playerCountChanged,
+            ProxyResourcePackRegistry proxyResourcePackRegistry,
+            BackendPaletteStore backendPaletteStore,
+            BackendPackCache backendPackCache
+    ) {
         this.session = session;
         this.networkSettingsNegotiator = networkSettingsNegotiator;
         this.backendConnector = backendConnector;
@@ -70,6 +106,10 @@ public final class InitialClientPacketHandler implements BedrockPacketHandler {
         this.proxyResourcePackRegistry = proxyResourcePackRegistry != null
                 ? proxyResourcePackRegistry
                 : ProxyResourcePackRegistry.empty();
+        this.backendPaletteStore = backendPaletteStore != null
+                ? backendPaletteStore
+                : BackendPaletteStore.disabled();
+        this.backendPackCache = backendPackCache != null ? backendPackCache : BackendPackCache.disabled();
     }
 
     @Override
@@ -132,7 +172,9 @@ public final class InitialClientPacketHandler implements BedrockPacketHandler {
                     clientLogin,
                     keyPair,
                     offlineLoginForge.forge(keyPair, clientLogin),
-                    proxyResourcePackRegistry
+                    proxyResourcePackRegistry,
+                    backendPaletteStore,
+                    backendPackCache
             );
 
             ConnectedPlayerRegistry.RegistrationResult registration = connectedPlayers.register(connection);

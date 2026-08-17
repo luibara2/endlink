@@ -11,6 +11,7 @@ import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.cloudburstmc.protocol.common.DefinitionRegistry;
 import org.cloudburstmc.protocol.common.NamedDefinition;
 import org.cloudburstmc.protocol.common.SimpleDefinitionRegistry;
+import org.endstone.proxy.palette.ItemPaletteMapping;
 
 public final class CodecDefinitionState {
     private static final DefinitionRegistry<BlockDefinition> UNKNOWN_BLOCKS = new UnknownBlockDefinitionRegistry();
@@ -32,6 +33,18 @@ public final class CodecDefinitionState {
 
     public static void syncFromItemComponents(BedrockSession backend, BedrockSession client, ItemComponentPacket packet) {
         syncItemDefinitions(backend, client, packet.getItems());
+    }
+
+    /**
+     * Installs a per-backend item id translation instead of one shared registry.
+     *
+     * <p>Each side gets the registry that makes its <em>decode</em> produce definitions numbered for
+     * the other side, which is what renumbers every item on re-encode without touching a serializer.
+     * See {@link ItemPaletteMapping}.</p>
+     */
+    public static void installItemMapping(BedrockSession backend, BedrockSession client, ItemPaletteMapping mapping) {
+        backend.getPeer().getCodecHelper().setItemDefinitions(mapping.backendSide());
+        client.getPeer().getCodecHelper().setItemDefinitions(mapping.clientSide());
     }
 
     public static void syncFromCameraPresets(BedrockSession backend, BedrockSession client, CameraPresetsPacket packet) {
@@ -94,6 +107,10 @@ public final class CodecDefinitionState {
             return new UnknownItemDefinition("minecraft:unknown_" + runtimeId, runtimeId);
         }
 
+        private static UnknownItemDefinition fromIdentifier(String identifier) {
+            return new UnknownItemDefinition(identifier == null ? "" : identifier, 0);
+        }
+
         @Override
         public String getIdentifier() {
             return identifier;
@@ -117,6 +134,16 @@ public final class CodecDefinitionState {
                 return ItemDefinition.AIR;
             }
             return UnknownItemDefinition.fromRuntimeId(runtimeId);
+        }
+
+        /**
+         * Name lookups reach here for recipes that arrive before the item registry does. The interface
+         * default throws, which would fail the whole packet; keeping the name is enough for it to
+         * re-encode unchanged.
+         */
+        @Override
+        public ItemDefinition getDefinition(String identifier) {
+            return UnknownItemDefinition.fromIdentifier(identifier);
         }
 
         @Override

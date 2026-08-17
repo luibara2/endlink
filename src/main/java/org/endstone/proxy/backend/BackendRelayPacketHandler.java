@@ -32,7 +32,14 @@ import org.cloudburstmc.protocol.bedrock.packet.CompressedBiomeDefinitionListPac
 import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.EntityEventPacket;
 import org.cloudburstmc.protocol.bedrock.packet.EntityFallPacket;
+import org.cloudburstmc.nbt.NbtMap;
+import org.cloudburstmc.protocol.bedrock.data.BlockPropertyData;
+import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
+import org.cloudburstmc.protocol.bedrock.packet.AvailableEntityIdentifiersPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ItemComponentPacket;
+import org.cloudburstmc.protocol.bedrock.packet.SyncEntityPropertyPacket;
+import org.endstone.proxy.palette.CrossBackendPalette;
+import org.endstone.proxy.palette.ItemPaletteMapping;
 import org.cloudburstmc.protocol.bedrock.packet.LevelChunkPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LevelSoundEventPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MoveEntityAbsolutePacket;
@@ -43,7 +50,9 @@ import org.cloudburstmc.protocol.bedrock.packet.MovementPredictionSyncPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkChunkPublisherUpdatePacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerListPacket;
+import org.cloudburstmc.protocol.bedrock.packet.ResourcePackChunkDataPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackClientResponsePacket;
+import org.cloudburstmc.protocol.bedrock.packet.ResourcePackDataInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackStackPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RespawnPacket;
@@ -80,6 +89,7 @@ import org.endstone.proxy.config.BackendConfig;
 import org.endstone.proxy.diagnostics.PacketViolation;
 import org.endstone.proxy.diagnostics.ProtocolFault;
 import org.endstone.proxy.protocol.CanonicalProtocol;
+import org.endstone.proxy.resource.BackendPackCache;
 import org.endstone.proxy.resource.ProxyResourcePackRegistry;
 import org.endstone.proxy.verification.PendingJoin;
 import org.endstone.proxy.verification.PendingJoinRegistry;
@@ -94,6 +104,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -171,6 +183,10 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
     private ChunkRadiusUpdatedPacket deferredInitialChunkRadiusUpdated;
     private long deferredInitialChunkRadiusTraceSequence;
     private int backendInputLockData;
+    /** Packs being assembled from bytes on their way to the client; see {@link #captureBackendPackBytes}. */
+    private final Map<UUID, ObservedPack> observedPacks = new HashMap<>();
+    /** Non-null only while this backend's packs are being downloaded during a switch. */
+    private BackendPackFetch packFetch;
 
     public BackendRelayPacketHandler(
             ProxyConnection connection,
@@ -228,6 +244,12 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
      * The production default is zero; {@code -Dproxy.logPackets=true} enables an unbounded trace.
      */
     private static final int PACKET_TRACE_MILLIS = ProxyConnection.configuredPacketTraceMillis();
+    /**
+     * How long a switching player may be held while their new backend's packs are downloaded. Long
+     * enough for a large pack on a local link, short enough that a silent backend is not mistaken for
+     * a slow one.
+     */
+    private static final long PACK_FETCH_TIMEOUT_MILLIS = 20_000;
 
     private static Set<String> parseDroppedClientbound() {
         String value = System.getProperty("proxy.dropClientbound", "");
@@ -562,6 +584,9 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
         if (backend == connection.backend() && interceptBackendKick(packet)) {
             return PacketSignal.HANDLED;
         }
+        // A pack the client is downloading passes through here in full, so learning it costs nothing
+        // beyond the copy — no extra request, no extra traffic.
+        captureBackendPackBytes(packet);
         // Proxy resource pack injection. Intercept the backend's resource pack packets so that
         // proxy packs are merged into the single info+stack the client sees.
         if (!connection.proxyResourcePackRegistry().isEmpty()) {
@@ -593,6 +618,9 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
         int sourceDimension = connection.playerDimensionId();
         if (pendingStartGame) {
             clearPreviousClientWorldState();
+        }
+        if (connection.crossBackendPalette().isEnabled() && handleCrossBackendPalette(packet, traceSequence)) {
+            return PacketSignal.HANDLED;
         }
         syncDefinitionState(packet);
         if (isCrossProtocol() && shouldDropCrossProtocolClientbound(packet)) {
@@ -1530,6 +1558,9 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
     }
 
     private boolean acknowledgePendingSwitchLoginPacket(BedrockPacket packet) {
+        if (packFetch != null && !packFetch.isFinished() && packFetch.handle(packet)) {
+            return true;
+        }
         if (packet instanceof ResourcePacksInfoPacket packsInfo) {
             if (!packsInfo.getResourcePackInfos().isEmpty() || !packsInfo.getBehaviorPackInfos().isEmpty()) {
                 if (connection.isPacketTraceActive()) {
@@ -1543,6 +1574,19 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
                 warnAboutUnservedSwitchPacks(packsInfo);
             } else if (connection.isPacketTraceActive()) {
                 System.out.printf("Acknowledging empty resource-pack info for pending backend %s during switch.%n", backendName);
+            }
+            // The one moment this backend's packs can be obtained: nobody else will ever ask it for
+            // them, because a client only downloads packs during its own login.
+            packFetch = BackendPackFetch.start(
+                    connection.backendPackCache(),
+                    backendName,
+                    packsInfo,
+                    backend::sendPacket,
+                    () -> sendPackResponse(ResourcePackClientResponsePacket.Status.HAVE_ALL_PACKS)
+            );
+            if (packFetch != null) {
+                schedulePackFetchDeadline(packFetch);
+                return true;
             }
             sendPackResponse(ResourcePackClientResponsePacket.Status.HAVE_ALL_PACKS);
             return true;
@@ -1591,6 +1635,78 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
                 unserved.size(),
                 String.join(", ", unserved)
         );
+    }
+
+    /**
+     * Keeps a copy of a pack the client is downloading from the backend, so the next player gets it
+     * from the proxy — including on backends they reach by switching, where no client can download
+     * anything.
+     *
+     * <p>Pure observation: the packets carry on to the client untouched. A client that already has
+     * the pack in its own cache never requests it, so nothing is learned from that join; the switch
+     * path ({@link BackendPackFetch}) is what guarantees a backend is eventually learned.</p>
+     */
+    private void captureBackendPackBytes(BedrockPacket packet) {
+        BackendPackCache cache = connection.backendPackCache();
+        if (!cache.isEnabled()) {
+            return;
+        }
+        if (packet instanceof ResourcePackDataInfoPacket dataInfo) {
+            observedPacks.remove(dataInfo.getPackId());
+            long size = dataInfo.getCompressedPackSize();
+            if (size <= 0 || size > BackendPackCache.MAX_PACK_BYTES
+                    || cache.has(dataInfo.getPackId(), ProxyResourcePackRegistry.parseVersion(dataInfo.getPackVersion()))) {
+                return;
+            }
+            observedPacks.put(dataInfo.getPackId(), new ObservedPack(
+                    new byte[(int) size], dataInfo.getHash(), Math.max(1, dataInfo.getMaxChunkSize())));
+            return;
+        }
+        if (!(packet instanceof ResourcePackChunkDataPacket chunkData)) {
+            return;
+        }
+        ObservedPack observed = observedPacks.get(chunkData.getPackId());
+        if (observed == null) {
+            return;
+        }
+        ByteBuf data = chunkData.getData();
+        int offset = (int) Math.min(observed.buffer.length, (long) chunkData.getChunkIndex() * observed.chunkSize);
+        int length = data == null ? 0 : Math.min(data.readableBytes(), observed.buffer.length - offset);
+        if (length > 0) {
+            // getBytes, not readBytes: this buffer is on its way to the client and must not be moved.
+            data.getBytes(data.readerIndex(), observed.buffer, offset, length);
+            observed.filled += length;
+        }
+        if (observed.filled >= observed.buffer.length) {
+            observedPacks.remove(chunkData.getPackId());
+            cache.store(chunkData.getPackId(), observed.buffer, observed.hash);
+        }
+    }
+
+    private static final class ObservedPack {
+        private final byte[] buffer;
+        private final byte[] hash;
+        private final int chunkSize;
+        private int filled;
+
+        private ObservedPack(byte[] buffer, byte[] hash, long chunkSize) {
+            this.buffer = buffer;
+            this.hash = hash;
+            this.chunkSize = (int) Math.min(Integer.MAX_VALUE, chunkSize);
+        }
+    }
+
+    /**
+     * Bounds the pack download in time. The player switching is waiting on it, so a backend that
+     * stops answering must not hold them there: the fetch is dropped and the handshake completes with
+     * the packs still unlearned, which is exactly the state the proxy was in before it tried.
+     */
+    private void schedulePackFetchDeadline(BackendPackFetch fetch) {
+        connection.client().getPeer().getChannel().eventLoop().schedule(() -> {
+            if (!fetch.isFinished()) {
+                fetch.abandon("the backend stopped sending after " + PACK_FETCH_TIMEOUT_MILLIS + "ms");
+            }
+        }, PACK_FETCH_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
     }
 
     private void sendPackResponse(ResourcePackClientResponsePacket.Status status) {
@@ -2382,7 +2498,11 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
                 startGame.setUniqueEntityId(clientUniqueEntityId);
             }
             connection.setPlayerDimensionId(startGame.getDimensionId());
-            CodecDefinitionState.syncFromStartGame(backend, connection.client(), startGame);
+            if (!connection.crossBackendPalette().isEnabled()) {
+                // With the cross-backend palette on, item definitions are owned by
+                // handleCrossBackendPalette: one shared registry would undo the per-backend mapping.
+                CodecDefinitionState.syncFromStartGame(backend, connection.client(), startGame);
+            }
             connection.tracePacketsForMillis(PACKET_TRACE_MILLIS);
             if (PACKET_TRACE_MILLIS > 0) {
                 System.out.printf(
@@ -2446,7 +2566,9 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
                 System.out.printf("Enabled client-side commands for backend %s.%n", backendName);
             }
         } else if (packet instanceof ItemComponentPacket itemComponent) {
-            CodecDefinitionState.syncFromItemComponents(backend, connection.client(), itemComponent);
+            if (!connection.crossBackendPalette().isEnabled()) {
+                CodecDefinitionState.syncFromItemComponents(backend, connection.client(), itemComponent);
+            }
         } else if (packet instanceof CameraPresetsPacket cameraPresets) {
             CodecDefinitionState.syncFromCameraPresets(backend, connection.client(), cameraPresets);
         } else if (packet instanceof ChangeDimensionPacket changeDimension) {
@@ -2471,6 +2593,114 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
             }
             // The backend's individual ADMIN/HOST/OWNER command level corrects the MEMBER world
             // default above. Ordinary members and explicit visitor/custom permissions are untouched.
+        }
+    }
+
+    /**
+     * Keeps custom items and entities rendering correctly across a seamless backend switch.
+     *
+     * <p>Bedrock reads its item registry ({@code ItemComponentPacket}) and its entity identifier list
+     * exactly once, at level init, and a switch deliberately does not re-run level init. So whatever
+     * the client is told on its <em>first</em> backend is what it still believes on every later one:
+     * a backend's custom item ids land in a registry that has no entry for them and draw arbitrary
+     * vanilla textures, and its custom entities are missing from the identifier list and render as
+     * nothing at all. That is the bug this method exists for, and no amount of serving the right
+     * resource packs fixes it — the packs supply textures for identifiers the client never learned.</p>
+     *
+     * <p>At login the client is therefore given the union of every backend's registries, and from then
+     * on each backend's own ids are translated to and from that union by
+     * {@link org.endstone.proxy.palette.ItemPaletteMapping}. On a later backend these packets are
+     * learned, used to rebuild the mapping, and dropped: resending them would tell the client
+     * something it cannot act on.</p>
+     *
+     * @return true when the packet has been fully handled and must not be forwarded
+     */
+    private boolean handleCrossBackendPalette(BedrockPacket packet, long traceSequence) {
+        CrossBackendPalette palette = connection.crossBackendPalette();
+        if (packet instanceof StartGamePacket startGame) {
+            // Applied on every StartGame, switches included: the union is a superset of what this
+            // backend sent, so a client that acts on a later StartGame is no worse off for it.
+            palette.applyToStartGame(backendName, startGame);
+            return false;
+        }
+        if (packet instanceof ItemComponentPacket itemComponent) {
+            List<ItemDefinition> backendItems = List.copyOf(itemComponent.getItems());
+            if (backendItems.isEmpty()) {
+                return false;
+            }
+            palette.store().learnItems(backendName, backendItems);
+            boolean firstBackend = !palette.hasClientItems();
+            if (firstBackend) {
+                List<ItemDefinition> union = palette.buildClientItems(backendName, backendItems);
+                itemComponent.getItems().clear();
+                itemComponent.getItems().addAll(union);
+            }
+            installItemPaletteMapping(backendItems);
+            if (firstBackend) {
+                return false;
+            }
+            if (connection.isPacketTraceActive()) {
+                System.out.printf(
+                        "Suppressed clientbound #%d item registry from backend %s: the client's registry was "
+                                + "fixed at login and now maps through the cross-backend palette.%n",
+                        traceSequence, backendName
+                );
+            }
+            return true;
+        }
+        if (packet instanceof AvailableEntityIdentifiersPacket entityIdentifiers) {
+            palette.store().learnEntityIdentifiers(backendName, entityIdentifiers.getIdentifiers());
+            if (palette.clientEntityIdentifiers() != null) {
+                return true;
+            }
+            entityIdentifiers.setIdentifiers(
+                    palette.buildClientEntityIdentifiers(backendName, entityIdentifiers.getIdentifiers()));
+            sendForeignEntityProperties();
+            return false;
+        }
+        if (packet instanceof SyncEntityPropertyPacket entityProperty) {
+            palette.store().learnEntityProperty(backendName, entityProperty.getData());
+            // One list per entity type is all the client keeps; a second backend's copy of the same
+            // type is noise, and a type it has already been told about must not be re-sent.
+            return !palette.markEntityPropertySent(entityProperty.getData());
+        }
+        return false;
+    }
+
+    /**
+     * Sends the entity property lists belonging to backends this player has not visited, so their
+     * entities behave correctly the moment they switch. Sent with the identifier list, which is the
+     * last of the definition burst and still ahead of any entity spawn.
+     */
+    private void sendForeignEntityProperties() {
+        List<NbtMap> pending = connection.crossBackendPalette().pendingEntityProperties(backendName);
+        for (NbtMap property : pending) {
+            SyncEntityPropertyPacket packet = new SyncEntityPropertyPacket();
+            packet.setData(property);
+            connection.client().sendPacket(packet);
+        }
+        if (!pending.isEmpty()
+                && connection.crossBackendPalette().store()
+                .firstReportOf("properties:" + backendName + ":" + pending.size())) {
+            System.out.printf(
+                    "Sent %d entity property list(s) from other backends to a client joining %s.%n",
+                    pending.size(), backendName
+            );
+        }
+    }
+
+    private void installItemPaletteMapping(List<ItemDefinition> backendItems) {
+        ItemPaletteMapping mapping = connection.crossBackendPalette().mappingFor(backendName, backendItems);
+        if (mapping == null) {
+            return;
+        }
+        CodecDefinitionState.installItemMapping(backend, connection.client(), mapping);
+        if (connection.isPacketTraceActive()) {
+            System.out.printf(
+                    "Installed item palette mapping for backend %s: %s.%n",
+                    backendName,
+                    mapping.isIdentity() ? "ids already agree" : "ids remapped to the client's registry"
+            );
         }
     }
 

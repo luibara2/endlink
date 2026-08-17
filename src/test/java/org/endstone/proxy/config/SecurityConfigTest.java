@@ -17,7 +17,14 @@ class SecurityConfigTest {
         // The proxy used to remove the rate limiter outright and set the packet limit to 0, which
         // left the unconnected-ping path unmetered on a public address.
         assertTrue(security.rateLimitEnabled());
-        assertEquals(120, security.packetLimit());
+        // Protective, but not so tight that joining trips it. RakNet's own 120 per 10ms tick is
+        // exceeded by a single Bedrock login burst over loopback or a LAN, and a trip blocks the
+        // address for ten seconds — so the player times out, retries, and never gets in. The limit
+        // has to stay far below the global one to still bound a single address.
+        assertTrue(security.packetLimit() >= 500,
+                () -> "packet limit " + security.packetLimit() + " is low enough to block a login burst");
+        assertTrue(security.packetLimit() <= security.globalPacketLimit() / 10,
+                () -> "one address may claim too much of the global budget");
         assertTrue(security.sendConnectionCookie());
         assertTrue(security.requireXuid());
     }
