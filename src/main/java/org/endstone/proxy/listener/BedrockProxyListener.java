@@ -187,7 +187,10 @@ public final class BedrockProxyListener {
                 config.policy(),
                 connectedPlayers,
                 permissions,
-                playerEnum
+                playerEnum,
+                backendPaletteStore,
+                config.publicAddress(),
+                listen.getPort()
         );
         NetworkCommands networkCommands = new NetworkCommands(
                 connectedPlayers,

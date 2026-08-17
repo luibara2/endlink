@@ -36,7 +36,8 @@ public record ProxyConfig(
         boolean cacheBackendPacks,
         Path backendPackCacheDir,
         boolean crossBackendPalette,
-        Path crossBackendPaletteCacheFile
+        Path crossBackendPaletteCacheFile,
+        String publicAddress
 ) {
     private static final String DEFAULT_LISTEN_HOST = "0.0.0.0";
     private static final int DEFAULT_LISTEN_PORT = 19132;
@@ -237,7 +238,8 @@ public record ProxyConfig(
                 cacheBackendPacks,
                 backendPackCacheDir,
                 crossBackendPalette,
-                crossBackendPaletteCacheFile
+                crossBackendPaletteCacheFile,
+                ConfigValues.stripInlineComment(properties.getProperty("publicAddress", "")).trim()
         );
     }
 

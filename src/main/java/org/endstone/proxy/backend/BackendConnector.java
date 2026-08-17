@@ -16,6 +16,7 @@ import org.cloudburstmc.protocol.bedrock.data.auth.AuthType;
 import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockClientInitializer;
 import org.cloudburstmc.protocol.bedrock.packet.RequestNetworkSettingsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.TextPacket;
+import org.cloudburstmc.protocol.bedrock.packet.TransferPacket;
 import org.endstone.proxy.codec.CodecDefinitionState;
 import org.endstone.proxy.command.NetworkCommands;
 import org.endstone.proxy.command.ProxyCommandRegistry;
@@ -32,6 +33,7 @@ import org.endstone.proxy.protocol.ProtocolBinding;
 import org.endstone.proxy.protocol.ProtocolRegistry;
 import org.endstone.proxy.network.LoggingExceptionHandler;
 import org.endstone.proxy.session.ProxySessionProfile;
+import org.endstone.proxy.palette.BackendPaletteStore;
 import org.endstone.proxy.verification.PendingJoinRegistry;
 
 import java.io.IOException;
@@ -58,6 +60,10 @@ public final class BackendConnector {
     private final ConnectedPlayerRegistry connectedPlayers;
     private final ProxyPermissions permissions;
     private final ProxyPlayerEnum playerEnum;
+    private final BackendPaletteStore paletteStore;
+    private final String publicAddress;
+    private final int listenPort;
+    private final ReconnectRoutes reconnectRoutes = new ReconnectRoutes();
     private final BackendSwitcher switcher;
     private final BackendFailover failover;
     private final JoinFailover joinFailover;
@@ -79,7 +85,10 @@ public final class BackendConnector {
             ProxyPolicy policy,
             ConnectedPlayerRegistry connectedPlayers,
             ProxyPermissions permissions,
-            ProxyPlayerEnum playerEnum
+            ProxyPlayerEnum playerEnum,
+            BackendPaletteStore paletteStore,
+            String publicAddress,
+            int listenPort
     ) {
         this(
                 eventLoopGroup,
@@ -95,7 +104,10 @@ public final class BackendConnector {
                 policy,
                 connectedPlayers,
                 permissions,
-                playerEnum
+                playerEnum,
+                paletteStore,
+                publicAddress,
+                listenPort
         );
     }
 
@@ -113,8 +125,14 @@ public final class BackendConnector {
             ProxyPolicy policy,
             ConnectedPlayerRegistry connectedPlayers,
             ProxyPermissions permissions,
-            ProxyPlayerEnum playerEnum
+            ProxyPlayerEnum playerEnum,
+            BackendPaletteStore paletteStore,
+            String publicAddress,
+            int listenPort
     ) {
+        this.paletteStore = paletteStore;
+        this.publicAddress = publicAddress == null ? "" : publicAddress.trim();
+        this.listenPort = listenPort;
         this.eventLoopGroup = eventLoopGroup;
         this.backendDirectory = backendDirectory;
         this.commandRegistry = commandRegistry;
@@ -153,6 +171,97 @@ public final class BackendConnector {
     }
 
     /**
+     * Whether this player can only reach a backend by reconnecting.
+     *
+     * <p>A Bedrock client fixes its block-id scheme from the StartGame it logged in with and cannot
+     * be told otherwise while it is playing, so a seamless handoff to a backend on the other scheme
+     * delivers chunks the client cannot decode: the player stands in an empty or scrambled world.
+     * Backends that hash block ids (every Bedrock server) and ones that number them by palette order
+     * (a Geyser instance fronting a Java server) are the two schemes in practice.</p>
+     *
+     * <p>Answered false while either side is unknown. Guessing "reconnect" for an unvisited backend
+     * would put a loading screen in front of the ordinary same-scheme switch that makes up almost
+     * every move on a network; the scheme is learned from the first StartGame and persisted, so the
+     * uncertainty lasts one visit rather than one restart.</p>
+     */
+    public boolean needsReconnectToReach(ProxyConnection connection, BackendConfig backend) {
+        Boolean clientHashed = connection.clientBlockIdsHashed();
+        Boolean backendHashed = paletteStore == null ? null : paletteStore.blockIdsHashed(backend.name());
+        return clientHashed != null && backendHashed != null && clientHashed != backendHashed;
+    }
+
+    /**
+     * Sends the player back to the proxy to reach a backend a handoff cannot.
+     *
+     * <p>The transfer names the proxy's own address, so the player never leaves it: the same
+     * listener answers, the same identity is verified again, and the backend stays unreachable from
+     * outside. What changes is that the client re-runs level init, which is the only way it will
+     * read a different block-id scheme.</p>
+     */
+    public boolean reconnectTo(ProxyConnection connection, BackendConfig backend) {
+        ReconnectAddress target = reconnectAddress(connection);
+        if (target == null) {
+            sendMessage(connection, "Unable to reach " + backend.name() + " from here. Reconnect and pick it from the server list.");
+            System.out.printf(
+                    "Cannot send %s to %s: it needs a reconnect, and the proxy has no address to send them back to."
+                            + " Set publicAddress in the config.%n",
+                    connection.clientLogin().authData().displayName(),
+                    backend.name()
+            );
+            return false;
+        }
+
+        reconnectRoutes.remember(connection.clientLogin().authData().xuid(), backend.name());
+        System.out.printf(
+                "Sending %s to %s by reconnect via %s:%d (it numbers block ids differently to the world"
+                        + " they logged into).%n",
+                connection.clientLogin().authData().displayName(),
+                backend.name(),
+                target.host(),
+                target.port()
+        );
+        sendMessage(connection, "Taking you to " + backend.name() + "...");
+
+        TransferPacket transfer = new TransferPacket();
+        transfer.setAddress(target.host());
+        transfer.setPort(target.port());
+        connection.client().sendPacket(transfer);
+        return true;
+    }
+
+    /**
+     * Where to tell the client to reconnect: the operator's {@code publicAddress} if set, otherwise
+     * the address this player themselves connected with.
+     *
+     * <p>The client's own claim is used by default so a working install needs no configuration at
+     * all — it is whatever they typed, so it is reachable for them by definition, and it is correct
+     * per player whether they came by hostname or by IP. It is unsigned and a modified client can
+     * claim anything, which is harmless here: the worst outcome is that a player fails to reconnect
+     * to an address they supplied. {@code publicAddress} exists for the case where that is not good
+     * enough, such as a client that connected through a hostname the proxy would rather not
+     * advertise.</p>
+     */
+    private ReconnectAddress reconnectAddress(ProxyConnection connection) {
+        ReconnectAddress configured = ReconnectAddress.parse(publicAddress, listenPort);
+        if (configured != null) {
+            return configured;
+        }
+        // The claim carries the port the player actually used, which is the right one to send them
+        // back to when the proxy sits behind a forwarded port.
+        return ReconnectAddress.parse(clientServerAddress(connection), listenPort);
+    }
+
+    public ReconnectRoutes reconnectRoutes() {
+        return reconnectRoutes;
+    }
+
+    /** False while the backend has never been seen, so the config key remains the way to say so. */
+    private boolean doesNotImplementSubChunks(BackendConfig backend) {
+        Boolean hashed = paletteStore == null ? null : paletteStore.blockIdsHashed(backend.name());
+        return hashed != null && !hashed;
+    }
+
+    /**
      * The backend a joining player lands on: their forced host if the address they connected with
      * has one, otherwise the default backend.
      *
@@ -162,6 +271,22 @@ public final class BackendConnector {
      * a permission check; see {@link ForcedHostsConfig}.</p>
      */
     private BackendConfig initialBackend(ProxyConnection connection) {
+        // A player the proxy itself just asked to reconnect goes where they were headed, ahead of
+        // any other rule: they did not choose to log in, they were sent round the loop to reach a
+        // backend a handoff could not, and dropping them on the default one instead would look like
+        // the move had simply failed.
+        BackendConfig pending = backendDirectory
+                .find(String.valueOf(reconnectRoutes.take(connection.clientLogin().authData().xuid())))
+                .orElse(null);
+        if (pending != null) {
+            System.out.printf(
+                    "Routing %s to backend %s: completing the reconnect they were sent on.%n",
+                    connection.clientLogin().authData().displayName(),
+                    pending.name()
+            );
+            return pending;
+        }
+
         ForcedHostsConfig forcedHosts = policy.forcedHosts();
         if (forcedHosts.isEmpty()) {
             return backendDirectory.defaultBackend();
@@ -348,7 +473,13 @@ public final class BackendConnector {
                         createdSession.set(backend);
                         backend.setConnection(connection);
                         backend.setDisconnectClientOnClose(disconnectClientOnClose);
-                        backend.setDropSubChunkRequests(backendConfig.dropSubChunkRequests());
+                        // Inferred rather than configured wherever possible: a backend that numbers
+                        // block ids by palette order is not really a Bedrock server and does not
+                        // implement the sub-chunk system either. The config key stays as an override
+                        // for a backend nobody has visited yet, but an ordinary install never needs
+                        // to set it.
+                        backend.setDropSubChunkRequests(
+                                backendConfig.dropSubChunkRequests() || doesNotImplementSubChunks(backendConfig));
                         if (!disconnectClientOnClose) {
                             connection.setPendingBackend(backend);
                         }

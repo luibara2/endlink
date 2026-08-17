@@ -45,6 +45,7 @@ public final class BackendPaletteStore {
     private static final String ENTITY_IDENTIFIERS = "entityIdentifiers";
     private static final String ENTITY_PROPERTIES = "entityProperties";
     private static final String BLOCK_PROPERTIES = "blockProperties";
+    private static final String BLOCK_IDS_HASHED = "blockIdsHashed";
     private static final String BLOCK_PROPERTIES_DATA = "data";
     private static final String NAME = "name";
     private static final String RUNTIME_ID = "id";
@@ -155,6 +156,32 @@ public final class BackendPaletteStore {
         return true;
     }
 
+    /**
+     * Records whether a backend hashes its block network ids.
+     *
+     * <p>Unlike the rest of the store this is learned even when the palette itself is not shared,
+     * because it is exactly the backends whose blocks cannot be shared that this has to be known
+     * for. See {@link BackendPalette#withBlockIdsHashed}.</p>
+     */
+    public synchronized boolean learnBlockIdsHashed(String backendName, boolean blockIdsHashed) {
+        if (!enabled || backendName == null) {
+            return false;
+        }
+        BackendPalette existing = palettes.getOrDefault(backendName, BackendPalette.empty(backendName));
+        if (existing.blockIdsHashed() != null && existing.blockIdsHashed() == blockIdsHashed) {
+            return false;
+        }
+        palettes.put(backendName, existing.withBlockIdsHashed(blockIdsHashed));
+        save();
+        return true;
+    }
+
+    /** Whether the named backend hashes block ids, or null if it has never been seen. */
+    public synchronized Boolean blockIdsHashed(String backendName) {
+        BackendPalette palette = backendName == null ? null : palettes.get(backendName);
+        return palette == null ? null : palette.blockIdsHashed();
+    }
+
     public synchronized boolean learnEntityProperty(String backendName, NbtMap property) {
         if (!enabled || backendName == null || property == null || property.isEmpty()) {
             return false;
@@ -240,6 +267,11 @@ public final class BackendPaletteStore {
                     .putList(ITEMS, NbtType.COMPOUND, items)
                     .putList(BLOCK_PROPERTIES, NbtType.COMPOUND, blocks)
                     .putList(ENTITY_PROPERTIES, NbtType.COMPOUND, palette.entityProperties());
+            // Written only once seen, so "never visited" stays distinguishable from "visited and
+            // does not hash" — the switcher treats those two cases differently.
+            if (palette.blockIdsHashed() != null) {
+                backend.putBoolean(BLOCK_IDS_HASHED, palette.blockIdsHashed());
+            }
             if (palette.entityIdentifiers() != null) {
                 backend.putCompound(ENTITY_IDENTIFIERS, palette.entityIdentifiers());
             }
@@ -282,7 +314,8 @@ public final class BackendPaletteStore {
                     items,
                     backend.containsKey(ENTITY_IDENTIFIERS) ? backend.getCompound(ENTITY_IDENTIFIERS) : null,
                     backend.getList(ENTITY_PROPERTIES, NbtType.COMPOUND, List.of()),
-                    blocks
+                    blocks,
+                    backend.containsKey(BLOCK_IDS_HASHED) ? backend.getBoolean(BLOCK_IDS_HASHED) : null
             ));
         }
     }

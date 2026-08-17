@@ -2621,6 +2621,10 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
             // Applied on every StartGame, switches included: the union is a superset of what this
             // backend sent, so a client that acts on a later StartGame is no worse off for it.
             palette.applyToStartGame(backendName, startGame);
+            // The client keeps whichever scheme its first StartGame carried. Recorded here rather
+            // than inside the palette because it is a property of this player's session, not of the
+            // backend, and it is what decides how they can be moved from now on.
+            connection.rememberClientBlockIdsHashed(startGame.isBlockNetworkIdsHashed());
             return false;
         }
         if (packet instanceof ItemComponentPacket itemComponent) {

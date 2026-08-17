@@ -146,6 +146,11 @@ public final class CrossBackendPalette {
      */
     public boolean applyToStartGame(String backendName, StartGamePacket startGame) {
         List<BlockPropertyData> backendBlocks = List.copyOf(startGame.getBlockProperties());
+        // Learned before anything else, and for every backend rather than only the shareable ones:
+        // this is what the switcher reads to decide whether a player can be handed over seamlessly,
+        // and the backends it most needs to know about are exactly the ones that fail the check
+        // below.
+        store.learnBlockIdsHashed(backendName, startGame.isBlockNetworkIdsHashed());
         warnIfBlockIdsNotHashed(backendName, startGame.isBlockNetworkIdsHashed());
 
         // Everything below assumes hashed ids, and for a backend without them it does active harm
@@ -157,7 +162,7 @@ public final class CrossBackendPalette {
         // into a silently corrupted world.
         //
         // So leave such a backend's StartGame exactly as it sent it, and keep its blocks out of the
-        // shared store too - an index means nothing on any other backend. The cost is the one
+        // shared store too — an index means nothing on any other backend. The cost is the one
         // warnIfBlockIdsNotHashed already describes: its custom blocks do not follow a player
         // elsewhere, and other backends' do not appear here.
         if (!startGame.isBlockNetworkIdsHashed()) {

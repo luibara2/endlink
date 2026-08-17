@@ -21,7 +21,8 @@ public record BackendPalette(
         List<ItemDefinition> items,
         NbtMap entityIdentifiers,
         List<NbtMap> entityProperties,
-        List<BlockPropertyData> blockProperties
+        List<BlockPropertyData> blockProperties,
+        Boolean blockIdsHashed
 ) {
     public BackendPalette {
         items = items == null ? List.of() : List.copyOf(items);
@@ -30,15 +31,28 @@ public record BackendPalette(
     }
 
     public static BackendPalette empty(String backendName) {
-        return new BackendPalette(backendName, List.of(), null, List.of(), List.of());
+        return new BackendPalette(backendName, List.of(), null, List.of(), List.of(), null);
     }
 
     public BackendPalette withItems(List<ItemDefinition> items) {
-        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties);
+        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties, blockIdsHashed);
     }
 
     public BackendPalette withEntityIdentifiers(NbtMap entityIdentifiers) {
-        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties);
+        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties, blockIdsHashed);
+    }
+
+    /**
+     * Whether this backend hashes block network ids, or null while it has never been seen.
+     *
+     * <p>The one fact about a backend that decides whether a player can be handed to it seamlessly.
+     * A client reads its block-id scheme from the StartGame it logs in with and never again, so a
+     * session that started on a hashing backend renders nothing on a palette-indexed one, and the
+     * reverse. Persisted because the decision has to be made <em>before</em> the switch — the first
+     * player to move after a restart cannot be the one who discovers it.</p>
+     */
+    public BackendPalette withBlockIdsHashed(boolean blockIdsHashed) {
+        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties, blockIdsHashed);
     }
 
     /**
@@ -47,7 +61,7 @@ public record BackendPalette(
      * correct its runtime id is.
      */
     public BackendPalette withBlockProperties(List<BlockPropertyData> blockProperties) {
-        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties);
+        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties, blockIdsHashed);
     }
 
     /** Adds one entity property list, replacing any earlier list for the same entity type. */
@@ -63,7 +77,7 @@ public record BackendPalette(
             }
         }
         merged.add(property);
-        return new BackendPalette(backendName, items, entityIdentifiers, merged, blockProperties);
+        return new BackendPalette(backendName, items, entityIdentifiers, merged, blockProperties, blockIdsHashed);
     }
 
     public boolean isEmpty() {

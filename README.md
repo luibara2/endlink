@@ -58,6 +58,11 @@ On first start it writes a fully documented `config.properties` and creates a `p
   [ViaEndlink](https://github.com/luibara2/viaendlink) addon. Java clients join, chat and walk
   around; they cannot open a chest yet. Read its status notice before relying on it. Endlink itself
   does not need it and knows nothing about Java.
+- **Minecraft: Java *servers* as backends**, through a Geyser instance in front of one. Bedrock
+  players can be sent to a Java server alongside the Bedrock ones, keeping their identity and their
+  player data. Moving across that boundary reconnects them to the proxy rather than handing them
+  over, for a reason that cannot be worked around; see
+  [Minecraft: Java backends](#minecraft-java-backends).
 
 ## Versions: run the latest, on both ends
 
@@ -90,6 +95,7 @@ The settings worth knowing before a first run:
 | `backendVerification.sharedSecret` | Must match EndlinkGuard's `shared_secret` on every backend |
 | `permissions.admins` | XUIDs allowed to run `/send`, `/alert`, `/glist`, `/perm` |
 | `backend.protocol` | Leave `auto` — it reads the version from the backend rather than trusting a pinned value |
+| `publicAddress` | Only for networks with a Java backend: the address players are sent back to when a move needs a reconnect. Empty uses the address each player connected with, which is usually right |
 | `resourcePacks.dir` | Packs every client gets at login, as `.mcpack` files or unpacked folders |
 | `resourcePacks.cacheBackendPacks` | Learns each backend's packs into `cache/packs` and serves them itself, so packs work after a switch without copying them into the directory above. The first player to switch to an unlearned backend waits for one download |
 | `crossBackendPalette` | Leave on if any backend has custom items or entities — it is what keeps them rendering after a switch. The proxy learns each backend's registry on the first visit and caches it in `cache/backend-palettes.nbt`; after an addon change, the first player there sees the old registry until they rejoin |
@@ -110,6 +116,33 @@ every join against the proxy over an HMAC-signed handshake and rejects the rest.
 
 Set `backendVerification.sharedSecret` here and `shared_secret` in EndlinkGuard's `config.toml` to
 the same value. Mismatch fails closed: proxied joins are rejected and both sides say so in the log.
+
+### Minecraft: Java backends
+
+A backend can also be a **Java server**, reached through a [Geyser](https://geysermc.org) instance
+that the proxy treats as an ordinary Bedrock backend. Bedrock players join Endlink as usual and can
+be sent to it alongside the Bedrock ones. Install
+[EndlinkGuard's `geyser/` build](https://github.com/luibara2/endlinkguard) into that Geyser's
+`extensions/` folder — it does the same job there as the Endstone build does on a Bedrock backend,
+and additionally carries the player's real IP through to the Java server.
+
+Nothing in Endlink's config needs setting for this. There is one behaviour to know about:
+
+**Moving to or from a Java backend reconnects the player instead of handing them over.** A Bedrock
+client reads its block-id scheme from the StartGame it logs in with and cannot be told otherwise
+while it is playing. Bedrock servers hash block ids from the block state; Geyser numbers them by
+palette position. A seamless handoff across that boundary delivers chunks the client cannot decode —
+the player would stand in an empty or scrambled world with nothing in any log to say why.
+
+So Endlink learns each backend's scheme from its first StartGame, remembers it, and moves players
+across that boundary by transferring them back to **its own address** and putting them where they
+asked. The player never leaves the proxy: same listener, same identity check, same permissions, and
+backends stay unreachable from outside. They see a loading screen. Switches between backends of the
+same kind are seamless as before.
+
+That transfer needs an address to send the client back to. By default the proxy uses whatever address
+each player connected with, which is correct per player and needs no configuration; set
+`publicAddress` when that is not good enough.
 
 ## Building
 
@@ -137,7 +170,8 @@ Or enable it once for good: `git config --global core.longpaths true`.
 | | |
 | --- | --- |
 | [EndlinkGuard](https://github.com/luibara2/endlinkguard) | The backend plugin. Verifies proxy joins and rejects direct ones — install it on every backend |
-| [ViaEndlink](https://github.com/luibara2/viaendlink) | **Beta.** Optional addon for Minecraft: Java Edition players. Joining, chat and terrain work; containers do not — read its status notice first |
+| [ViaEndlink](https://github.com/luibara2/viaendlink) | **Beta.** Optional addon for Minecraft: Java Edition *players* joining Bedrock backends. Joining, chat and terrain work; containers do not — read its status notice first |
+| [Geyser](https://geysermc.org) | Not an addon: run one in front of a Java *server* to offer it as a backend. See [Minecraft: Java backends](#minecraft-java-backends) |
 | [Endstone](https://github.com/EndstoneMC/endstone) | The recommended backend server: plugin-capable Bedrock Dedicated Server |
 
 ## Licence

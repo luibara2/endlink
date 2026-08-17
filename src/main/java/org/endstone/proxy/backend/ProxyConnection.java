@@ -43,6 +43,7 @@ public final class ProxyConnection {
     private final ProxyResourcePackRegistry proxyResourcePackRegistry;
     private final BackendPackCache backendPackCache;
     private final CrossBackendPalette crossBackendPalette;
+    private Boolean clientBlockIdsHashed;
     private final ClientWorldState clientWorldState = new ClientWorldState();
     private BackendSession backend;
     private String backendName;
@@ -209,6 +210,24 @@ public final class ProxyConnection {
      */
     public CrossBackendPalette crossBackendPalette() {
         return crossBackendPalette;
+    }
+
+    /**
+     * Whether this client reads block ids as hashes, fixed by the StartGame it logged in with.
+     *
+     * <p>Null until the first StartGame reaches the client. Like the registries above this cannot
+     * change afterwards, which is why a backend on the other scheme has to be reached by a reconnect
+     * rather than a handoff.</p>
+     */
+    public synchronized Boolean clientBlockIdsHashed() {
+        return clientBlockIdsHashed;
+    }
+
+    /** Recorded once, from the first StartGame forwarded to the client; later ones cannot change it. */
+    public synchronized void rememberClientBlockIdsHashed(boolean hashed) {
+        if (clientBlockIdsHashed == null) {
+            clientBlockIdsHashed = hashed;
+        }
     }
 
     public synchronized BackendSession backend() {

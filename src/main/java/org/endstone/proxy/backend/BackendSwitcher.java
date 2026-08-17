@@ -38,6 +38,13 @@ public final class BackendSwitcher {
             return false;
         }
 
+        // Nothing is dialled for a reconnect — the client leaves and comes back on its own — so the
+        // switch lock must be released here rather than by an attempt that never runs.
+        if (backendConnector.needsReconnectToReach(connection, backend)) {
+            connection.finishBackendSwitch();
+            return backendConnector.reconnectTo(connection, backend);
+        }
+
         sendMessage(connection, "Connecting to " + backend.name() + "...");
         // connectForSwitch calls awaitUninterruptibly() internally, which must not run
         // on a Netty I/O thread — doing so throws BlockingOperationException. Dispatch
