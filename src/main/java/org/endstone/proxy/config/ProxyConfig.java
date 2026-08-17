@@ -168,7 +168,8 @@ public record ProxyConfig(
         BackendConfig defaultBackend = new BackendConfig(
                 backendName,
                 new InetSocketAddress(backendHost, backendPort),
-                backendProtocolFor(properties, backendName)
+                backendProtocolFor(properties, backendName),
+                dropSubChunkRequestsFor(properties, backendName)
         );
         Map<String, BackendConfig> backends = backendConfigs(properties, defaultBackend);
         String hubBackendName = properties.getProperty("hubBackend", backendName);
@@ -317,6 +318,11 @@ public record ProxyConfig(
         return CanonicalProtocol.fromConfig(ConfigValues.stripInlineComment(value));
     }
 
+    /** See {@link BackendConfig#dropSubChunkRequests()} for why a backend would want this. */
+    private static boolean dropSubChunkRequestsFor(Properties properties, String name) {
+        return booleanProperty(properties, "backend." + name + ".dropSubChunkRequests", false);
+    }
+
     private static int intProperty(Properties properties, String key, int fallback) {
         String value = properties.getProperty(key);
         if (value == null || value.isBlank()) {
@@ -360,7 +366,8 @@ public record ProxyConfig(
             backends.put(normalizedName, new BackendConfig(
                     name,
                     new InetSocketAddress(host, parsedPort),
-                    backendProtocolFor(properties, name)
+                    backendProtocolFor(properties, name),
+                    dropSubChunkRequestsFor(properties, name)
             ));
         }
         return Collections.unmodifiableMap(backends);

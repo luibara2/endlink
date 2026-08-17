@@ -127,6 +127,44 @@ class ProxyConfigTest {
         }
     }
 
+    /**
+     * A backend that is not really a Bedrock server cannot answer sub-chunk requests, and the client
+     * keeps sending them across a switch because the mode belongs to its session. The flag is what
+     * lets the proxy withhold them, and it must stay strictly per backend: turning it on for one
+     * must not quietly starve every other backend of the requests it does implement.
+     */
+    @Test
+    void readsDropSubChunkRequestsPerBackend() {
+        Properties properties = new Properties();
+        properties.setProperty("backend.name", "hub");
+        properties.setProperty("backend.host", "127.0.0.1");
+        properties.setProperty("backend.port", "19141");
+        properties.setProperty("backends", "hub,javatest");
+        properties.setProperty("backend.javatest.host", "127.0.0.1");
+        properties.setProperty("backend.javatest.port", "19152");
+        properties.setProperty("backend.javatest.dropSubChunkRequests", "true");
+
+        ProxyConfig config = ProxyConfig.from(properties, Path.of("."));
+
+        assertTrue(config.backends().get("javatest").dropSubChunkRequests(),
+                "backend.javatest.dropSubChunkRequests=true must reach the backend it names");
+        assertFalse(config.backends().get("hub").dropSubChunkRequests(),
+                "a backend without the key must keep receiving sub-chunk requests");
+    }
+
+    @Test
+    void defaultsDropSubChunkRequestsToOff() {
+        Properties properties = new Properties();
+        properties.setProperty("backend.name", "hub");
+        properties.setProperty("backend.host", "127.0.0.1");
+        properties.setProperty("backend.port", "19141");
+
+        ProxyConfig config = ProxyConfig.from(properties, Path.of("."));
+
+        assertFalse(config.backends().get("hub").dropSubChunkRequests(),
+                "every real Bedrock server implements sub-chunks, so withholding them must be opt-in");
+    }
+
     @Test
     void loadsOverrides() {
         Properties properties = new Properties();

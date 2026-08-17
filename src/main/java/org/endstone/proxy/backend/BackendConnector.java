@@ -348,6 +348,7 @@ public final class BackendConnector {
                         createdSession.set(backend);
                         backend.setConnection(connection);
                         backend.setDisconnectClientOnClose(disconnectClientOnClose);
+                        backend.setDropSubChunkRequests(backendConfig.dropSubChunkRequests());
                         if (!disconnectClientOnClose) {
                             connection.setPendingBackend(backend);
                         }

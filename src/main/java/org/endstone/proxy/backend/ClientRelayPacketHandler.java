@@ -539,6 +539,20 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
     }
 
     private void sendToBackend(BackendSession backend, BedrockPacket packet, long traceSequence) {
+        // Sub-chunk mode belongs to the client's session, not to one backend, so it survives a
+        // switch: a client taught to request terrain a sub-chunk at a time by a BDS backend goes on
+        // doing it after the handoff. A backend that never advertised the system then receives
+        // requests it cannot answer. Withheld here rather than translated away because there is
+        // nothing to translate to — the request simply has no meaning there.
+        if (backend != null && backend.dropSubChunkRequests() && packet instanceof SubChunkRequestPacket) {
+            if (traceSequence >= 0 || connection.isPacketTraceActive()) {
+                System.out.printf(
+                        "Withholding SubChunkRequest from backend %s: it does not implement the sub-chunk system.%n",
+                        connection.backendName()
+                );
+            }
+            return;
+        }
         normalizePlayerRuntimeId(packet);
         normalizeChatIdentity(packet);
         BedrockPacket translated = connection.sessionProfile()
