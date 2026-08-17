@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -259,6 +260,60 @@ final class CrossBackendPaletteTest {
         // clearing it unconditionally would hide that.
         assertTrue(!palette.applyToStartGame("hub", startGame));
         assertEquals(42L, startGame.getBlockRegistryChecksum());
+    }
+
+    /**
+     * Where block ids are palette indices, a block's number <em>is</em> its position in the list
+     * StartGame carries. Appending another backend's definitions therefore renumbers the world:
+     * ordinary blocks resolve to the wrong entry and anything past the backend's own count draws as
+     * the unknown block. Zeroing the checksum on top of that removes the client's own mismatch
+     * check, so instead of a clean disconnect the player walks around a corrupted world.
+     */
+    @Test
+    void aBackendThatDoesNotHashBlockIdsKeepsItsPaletteExactlyAsSent(@TempDir Path dir) {
+        CrossBackendPalette palette = new CrossBackendPalette(BackendPaletteStore.load(dir.resolve("p.nbt")));
+
+        StartGamePacket hub = new StartGamePacket();
+        hub.setBlockNetworkIdsHashed(true);
+        hub.getBlockProperties().add(new BlockPropertyData("hub:podium", NbtMap.EMPTY));
+        palette.applyToStartGame("hub", hub);
+
+        StartGamePacket geyser = new StartGamePacket();
+        geyser.setBlockNetworkIdsHashed(false);
+        geyser.setBlockRegistryChecksum(1234L);
+        geyser.getBlockProperties().add(new BlockPropertyData("geyser_custom:test_block", NbtMap.EMPTY));
+
+        assertFalse(palette.applyToStartGame("javatest", geyser),
+                "a palette-indexed backend's StartGame must not be rewritten");
+        assertEquals(1, geyser.getBlockProperties().size(),
+                "hub's block must not be appended - it would shift every index the client resolves");
+        assertEquals("geyser_custom:test_block", geyser.getBlockProperties().get(0).getName());
+        assertEquals(1234L, geyser.getBlockRegistryChecksum(),
+                "the checksum is the client's own mismatch check and must survive");
+    }
+
+    /**
+     * The other direction: an index means nothing anywhere else, so a palette-indexed backend's
+     * blocks must not be pushed into a hashed backend's registry either.
+     */
+    @Test
+    void blocksFromAPaletteIndexedBackendAreNotSharedWithOthers(@TempDir Path dir) {
+        CrossBackendPalette palette = new CrossBackendPalette(BackendPaletteStore.load(dir.resolve("p.nbt")));
+
+        StartGamePacket geyser = new StartGamePacket();
+        geyser.setBlockNetworkIdsHashed(false);
+        geyser.getBlockProperties().add(new BlockPropertyData("geyser_custom:test_block", NbtMap.EMPTY));
+        palette.applyToStartGame("javatest", geyser);
+
+        StartGamePacket hub = new StartGamePacket();
+        hub.setBlockNetworkIdsHashed(true);
+        hub.setBlockRegistryChecksum(99L);
+        hub.getBlockProperties().add(new BlockPropertyData("hub:podium", NbtMap.EMPTY));
+
+        assertFalse(palette.applyToStartGame("hub", hub),
+                "nothing should have been learned from the palette-indexed backend");
+        assertEquals(1, hub.getBlockProperties().size());
+        assertEquals(99L, hub.getBlockRegistryChecksum());
     }
 
     @Test

@@ -146,8 +146,26 @@ public final class CrossBackendPalette {
      */
     public boolean applyToStartGame(String backendName, StartGamePacket startGame) {
         List<BlockPropertyData> backendBlocks = List.copyOf(startGame.getBlockProperties());
-        store.learnBlockProperties(backendName, backendBlocks);
         warnIfBlockIdsNotHashed(backendName, startGame.isBlockNetworkIdsHashed());
+
+        // Everything below assumes hashed ids, and for a backend without them it does active harm
+        // rather than nothing. Where ids are palette indices, a block's number is its position in
+        // this list: appending another backend's definitions renumbers the world out from under the
+        // client, so ordinary blocks resolve to the wrong entry and anything past the backend's own
+        // count has no definition at all and draws as the unknown block. Zeroing the checksum then
+        // removes the client's own mismatch check, turning what would have been a clean disconnect
+        // into a silently corrupted world.
+        //
+        // So leave such a backend's StartGame exactly as it sent it, and keep its blocks out of the
+        // shared store too - an index means nothing on any other backend. The cost is the one
+        // warnIfBlockIdsNotHashed already describes: its custom blocks do not follow a player
+        // elsewhere, and other backends' do not appear here.
+        if (!startGame.isBlockNetworkIdsHashed()) {
+            this.clientBlockProperties = backendBlocks;
+            return false;
+        }
+
+        store.learnBlockProperties(backendName, backendBlocks);
 
         List<BlockPropertyData> union = buildClientBlockProperties(backendName, backendBlocks);
         if (union.size() == backendBlocks.size()) {
