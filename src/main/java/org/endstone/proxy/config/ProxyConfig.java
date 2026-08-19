@@ -212,7 +212,7 @@ public record ProxyConfig(
                                 "backendVerification.sharedSecret",
                                 BackendVerificationConfig.DEFAULT_SHARED_SECRET
                         ),
-                        intProperty(properties, "backendVerification.pendingJoinTtlMillis", 15_000),
+                        intProperty(properties, "backendVerification.pendingJoinTtlMillis", 600_000),
                         intProperty(properties, "backendVerification.requestSkewMillis", 30_000)
                 ),
                 new ProxyPolicy(
@@ -259,7 +259,7 @@ public record ProxyConfig(
         properties.setProperty("backendVerification.host", "127.0.0.1");
         properties.setProperty("backendVerification.port", "19135");
         properties.setProperty("backendVerification.sharedSecret", BackendVerificationConfig.DEFAULT_SHARED_SECRET);
-        properties.setProperty("backendVerification.pendingJoinTtlMillis", "15000");
+        properties.setProperty("backendVerification.pendingJoinTtlMillis", "600000");
         properties.setProperty("backendVerification.requestSkewMillis", "30000");
         properties.setProperty("failover.enabled", "true");
         properties.setProperty("failover.fallbacks", "default");

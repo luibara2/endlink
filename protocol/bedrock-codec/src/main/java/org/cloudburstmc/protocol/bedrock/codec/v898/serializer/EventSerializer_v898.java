@@ -40,6 +40,13 @@ public class EventSerializer_v898 extends EventSerializer_v685 {
         VarInts.writeUnsignedInt(buffer, packet.getPayloadType());
 
         function.accept(buffer, helper, eventData);
+
+        // Whatever this build's reader could not account for, put back exactly where it was found.
+        // See EventPacket#trailingPayload.
+        byte[] trailing = packet.getTrailingPayload();
+        if (trailing != null && trailing.length > 0) {
+            buffer.writeBytes(trailing);
+        }
     }
 
     @Override
@@ -61,5 +68,11 @@ public class EventSerializer_v898 extends EventSerializer_v685 {
         }
 
         packet.setEventData(function.apply(buffer, helper));
+
+        if (buffer.isReadable()) {
+            byte[] trailing = new byte[buffer.readableBytes()];
+            buffer.readBytes(trailing);
+            packet.setTrailingPayload(trailing);
+        }
     }
 }

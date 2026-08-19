@@ -69,8 +69,14 @@ public final class PendingJoinRegistry {
         // No UUID cross-check: BDS 1.26.10+ in offline mode generates a session-derived
         // unique_id that the proxy cannot predict (it isn't `nameUUIDFromBytes("pocket-auth-
         // 1-xuid:<xuid>")` or any other algorithm we can match). The HMAC-signed request
-        // proves the plugin is legitimate; the short pending-join TTL prevents replay; and
-        // Xbox Live enforces display-name uniqueness at any given instant.
+        // proves the plugin is legitimate; the remove() above makes a join single-use, so a
+        // replayed request finds nothing; and Xbox Live enforces display-name uniqueness at
+        // any given instant.
+        //
+        // The TTL is deliberately not part of that argument any more. It used to be 15s and was
+        // described as the replay defence, but it never was one - single-use consumption is - and
+        // 15s is shorter than a resource pack download, which the verifier's callback waits behind.
+        // It now bounds abandoned joins rather than gating live ones.
         return new ConsumedJoin(ConsumeResult.ACCEPTED, pendingJoin);
     }
 

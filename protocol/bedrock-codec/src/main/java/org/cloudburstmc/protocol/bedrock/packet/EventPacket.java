@@ -10,6 +10,8 @@ import org.cloudburstmc.protocol.common.PacketSignal;
 @EqualsAndHashCode(doNotUseGetters = true)
 @ToString(doNotUseGetters = true)
 public class EventPacket implements BedrockPacket {
+    private static final byte[] EMPTY_TRAILING_PAYLOAD = new byte[0];
+
     private long uniqueEntityId;
     private boolean usePlayerId;
     private EventData eventData;
@@ -27,6 +29,22 @@ public class EventPacket implements BedrockPacket {
      * and the relayed copy reaches the client a byte short.
      */
     private int payloadType;
+
+    /**
+     * Payload bytes the event body reader did not consume, kept so a relayed event goes back out at
+     * its original length.
+     *
+     * <p>Event payloads gain fields between game versions, and a reader that stops early does not
+     * fail — {@code BedrockCodec.tryDecode} only mentions the leftovers at debug level. The relayed
+     * copy is then short by exactly those bytes and the client drops the connection with no
+     * disconnect reason. That is what a 1.26.40 composter did: {@code RECOVERED_BONEMEAL} arrives as
+     * 13 bytes and re-encoded to 12, and the player who took the bone meal was kicked while everyone
+     * watching stayed connected.
+     *
+     * <p>Empty when the reader consumed the whole payload, and when the packet was built rather than
+     * decoded.
+     */
+    private byte[] trailingPayload = EMPTY_TRAILING_PAYLOAD;
 
     @Override
     public final PacketSignal handle(BedrockPacketHandler handler) {
