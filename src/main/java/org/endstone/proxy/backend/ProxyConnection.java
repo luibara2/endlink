@@ -671,17 +671,18 @@ public final class ProxyConnection {
     }
 
     /**
-     * Records a client-ready (already translated) packet that carries world geometry — chunks,
-     * sub-chunks, block updates and the publisher updates that scope them.
+     * Records a client-ready (already translated) packet that carries persistent world state —
+     * chunks, entity spawns/removals, block updates and the publisher updates that scope them.
      *
      * <p>The backend streams a chunk exactly once per player: BDS marks it sent in that player's chunk
      * view and only ever re-sends it if the chunk leaves and re-enters the view radius. During a
      * backend switch the {@link BackendSwitchReset} suppresses world state so it cannot land in the
      * fake dimension the client is bounced through — but a backend whose spawn chunks are already
      * resident and cheap to serialize (a skyblock/void world, say) can stream the player's entire
-     * surroundings inside that window. Dropping those is permanent: the client is left in a void it
-     * can never recover from because nothing will resend them. So buffer instead of dropping, and
-     * replay once the client is back in the target dimension.</p>
+     * surroundings inside that window. Entity visibility has the same edge-triggered behavior: an
+     * AddEntity/AddPlayer packet suppressed while the entity is already in view is not sent again until
+     * the player leaves and re-enters that view. Dropping either kind is therefore permanent in place,
+     * so buffer instead and replay once the client is back in the target dimension.</p>
      *
      * <p>Bounded by {@link #MAX_DEFERRED_SWITCH_WORLD_STATE} so a backend that streams for the whole
      * ack-fallback window cannot grow this without limit; past the cap we fall back to dropping.</p>

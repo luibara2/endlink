@@ -55,6 +55,7 @@ import org.cloudburstmc.protocol.bedrock.packet.ResourcePackClientResponsePacket
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackDataInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackStackPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket;
+import org.cloudburstmc.protocol.bedrock.packet.RemoveEntityPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RespawnPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RequestChunkRadiusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetCommandsEnabledPacket;
@@ -1416,17 +1417,30 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
     }
 
     /**
-     * World geometry the backend will not resend on its own. Deliberately excludes entity spawns and
-     * movement — the backend re-announces entities as they tick back into view, so replaying stale
-     * copies of those would fight the live stream rather than fill a gap.
+     * World state the backend will not resend while it remains inside the player's view.
+     *
+     * <p>That includes entity spawns as well as chunks. BDS sends AddEntity/AddPlayer when an entity
+     * enters the view, not on every tick. If the packet lands during the dimension bounce and is only
+     * suppressed, the backend still considers the entity visible and will not announce it again until
+     * the player walks far enough away and returns. Keep the matching removal too, so an entity which
+     * disappears during the reset is not replayed as a ghost.</p>
+     *
+     * <p>Movement and other high-frequency updates remain suppressed. The spawn packet contains the
+     * authoritative initial position and metadata, and live updates resume after the short reset;
+     * buffering every tick would let a busy backend crowd chunks out of the bounded replay buffer.</p>
      */
-    private static boolean isDeferrableWorldStatePacket(BedrockPacket packet) {
+    static boolean isDeferrableWorldStatePacket(BedrockPacket packet) {
         return packet instanceof LevelChunkPacket
                 || packet instanceof SubChunkPacket
                 || packet instanceof NetworkChunkPublisherUpdatePacket
                 || packet instanceof UpdateBlockPacket
                 || packet instanceof UpdateBlockSyncedPacket
-                || packet instanceof UpdateSubChunkBlocksPacket;
+                || packet instanceof UpdateSubChunkBlocksPacket
+                || packet instanceof AddEntityPacket
+                || packet instanceof AddItemEntityPacket
+                || packet instanceof AddHangingEntityPacket
+                || packet instanceof AddPlayerPacket
+                || packet instanceof RemoveEntityPacket;
     }
 
     private boolean isLocalPlayerStatePacket(BedrockPacket packet) {

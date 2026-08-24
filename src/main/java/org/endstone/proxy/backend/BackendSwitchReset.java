@@ -342,10 +342,11 @@ public final class BackendSwitchReset {
     }
 
     /**
-     * Replays the chunks, sub-chunks and block edits the new backend streamed while the client was
-     * being bounced through the fake dimension. Order is preserved so each publisher update still
-     * precedes the chunks it scopes, and the real chunk data lands after — and therefore overwrites —
-     * the empty chunks {@link #injectEmptyChunks} seeded around the target position.
+     * Replays the chunks, entity spawns and other persistent world state the new backend streamed
+     * while the client was being bounced through the fake dimension. Order is preserved so each
+     * publisher update still precedes the chunks it scopes, entity removals remain after their spawn,
+     * and the real chunk data lands after — and therefore overwrites — the empty chunks
+     * {@link #injectEmptyChunks} seeded around the target position.
      *
      * <p>Without this the player is permanently stranded in a void on any backend quick enough to
      * finish its join chunk burst inside the reset window, because the backend counts those chunks as
@@ -365,6 +366,11 @@ public final class BackendSwitchReset {
                 continue;
             }
             connection.client().sendPacket(worldPacket);
+            // Deferred entity spawns only become part of the client's world here. Remember them now
+            // so the next backend switch removes them before installing that backend's entities. Doing
+            // this when the packet was captured would track entities the client never saw if this reset
+            // were abandoned instead of replayed.
+            connection.clientWorldState().track(worldPacket);
             replayed++;
         }
         if (connection.isPacketTraceActive()) {
