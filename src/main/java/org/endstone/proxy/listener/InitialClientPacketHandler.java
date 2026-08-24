@@ -16,6 +16,7 @@ import org.endstone.proxy.backend.UnsupportedVersionPairException;
 import org.endstone.proxy.crypto.BedrockCrypto;
 import org.endstone.proxy.network.NetworkSettingsNegotiationResult;
 import org.endstone.proxy.network.NetworkSettingsNegotiator;
+import org.endstone.proxy.protocol.BedrockRelease;
 import org.endstone.proxy.protocol.CanonicalProtocol;
 import org.endstone.proxy.protocol.IdentityTranslator898;
 import org.endstone.proxy.palette.BackendPaletteStore;
@@ -157,6 +158,12 @@ public final class InitialClientPacketHandler implements BedrockPacketHandler {
             }
 
             ClientLogin clientLogin = authenticator.authenticate(packet);
+            // The first point at which the client's *release* is known. Its protocol version was
+            // settled during network settings and does not identify the release on its own: 1.26.40
+            // through 1.26.44 all negotiate 2168 and disagree about how a scoreboard removal is
+            // written. Safe here because the client codec is installed once, back in
+            // handle(RequestNetworkSettingsPacket), and never replaced. See BedrockRelease.
+            BedrockRelease.applyTo(session, clientLogin.gameVersion());
             KeyPair keyPair = BedrockCrypto.createKeyPair();
             byte[] token = BedrockCrypto.randomToken();
             clientEncryptionKey = BedrockCrypto.secretKey(keyPair.getPrivate(), clientLogin.identityPublicKey(), token);
@@ -193,12 +200,17 @@ public final class InitialClientPacketHandler implements BedrockPacketHandler {
             session.setProxyConnection(connection);
             playerCountChanged.run();
             System.out.printf(
-                    "Player %s (XUID %s) joined the proxy from %s%s.%n",
+                    "Player %s (XUID %s) joined the proxy from %s on Minecraft %s%s.%n",
                     clientLogin.authData().displayName(),
                     clientLogin.authData().xuid(),
                     // A bridged player's socket address is the bridge's loopback one, which is identical
                     // for all of them. Report the address the bridge stamped in instead.
                     connection.clientAddress(),
+                    // Not decoration. Protocol 2168 covers 1.26.40 to 1.26.44 and they are not the
+                    // same wire format, so "which release is this player on" is a real diagnostic
+                    // question, and until now the log had no answer to it: every join looked alike
+                    // and a release-specific fault looked random.
+                    BedrockRelease.describe(clientLogin.gameVersion()),
                     clientLogin.isJavaEdition() ? " (a bridged edition)" : ""
             );
 

@@ -24,12 +24,15 @@ import org.endstone.proxy.command.ProxyPlayerEnum;
 import org.endstone.proxy.permission.ProxyPermissions;
 import org.endstone.proxy.plugin.PluginManager;
 import org.endstone.proxy.plugin.TrustedListenerSpec;
+import org.endstone.proxy.config.BackendConfig;
+import org.endstone.proxy.config.BackendVerificationConfig;
 import org.endstone.proxy.config.ProxyConfig;
 import org.endstone.proxy.config.SecurityConfig;
 import org.endstone.proxy.network.LoggingExceptionHandler;
 import org.endstone.proxy.security.ConnectionThrottle;
 import org.endstone.proxy.security.PreAuthBatchLimiter;
 import org.endstone.proxy.security.RateLimitReporter;
+import org.endstone.proxy.protocol.CanonicalProtocol;
 import org.endstone.proxy.protocol.ProtocolNegotiator;
 import org.endstone.proxy.protocol.ProtocolRegistry;
 import org.endstone.proxy.palette.BackendPaletteStore;
@@ -48,6 +51,13 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
 
 public final class BedrockProxyListener {
+    /**
+     * Below this, a pending join can expire while the player is still downloading resource packs.
+     * Not a hard floor - an install with no packs is fine far below it - but low enough that anything
+     * under it is worth saying out loud.
+     */
+    private static final long SHORT_PENDING_JOIN_TTL_MILLIS = 60_000L;
+
     private final ProxyConfig config;
     private final ProtocolRegistry protocolRegistry;
     private final NioEventLoopGroup eventLoopGroup = new NioEventLoopGroup();
@@ -252,6 +262,8 @@ public final class BedrockProxyListener {
                 security.requireXuid(),
                 security.commandCooldownMillis()
         );
+        warnAboutAShortPendingJoinTtl();
+        warnAboutAStalePinnedBackendRelease();
         // A diagnostic you cannot tell is running is not a diagnostic. A capture was once taken to
         // answer whether the outbound verifier found anything, and the answer — no output — was
         // indistinguishable from "the flag was never passed", so the run proved nothing and had to be
@@ -559,6 +571,78 @@ public final class BedrockProxyListener {
                 .nintendoLimited(false)
                 .ipv4Port(port)
                 .ipv6Port(port);
+    }
+
+    /**
+     * The pending-join TTL bounds how long a backend has to call back and verify a join. The verifier's
+     * callback waits behind the client's resource-pack download, so the value has to cover the
+     * download, not the handshake.
+     *
+     * <p>This warning exists because the default was raised from 15 seconds to ten minutes for exactly
+     * that reason and <em>nothing on a running server noticed</em>. A generated config is written once,
+     * on first start; every install made before the change kept the old value, and the only symptom is
+     * a player being turned away with "Proxy verification failed." after a slow download — which reads
+     * as a random kick and points at nothing. A default that quietly fails to reach the servers that
+     * need it is not a fix, so the running value now has to say so itself.
+     */
+    private void warnAboutAShortPendingJoinTtl() {
+        if (!config.backendVerification().enabled()) {
+            return;
+        }
+        long ttlMillis = config.backendVerification().pendingJoinTtlMillis();
+        if (ttlMillis >= SHORT_PENDING_JOIN_TTL_MILLIS) {
+            return;
+        }
+        System.out.printf(
+                "WARNING: backendVerification.pendingJoinTtlMillis is %dms. A backend verifies a join"
+                        + " only after the player has finished downloading resource packs, so anything"
+                        + " under %dms turns a slow download into \"Proxy verification failed.\" and a"
+                        + " kick the player cannot explain. The shipped default is %dms; raise it in"
+                        + " config.properties (a config generated before this default changed keeps the"
+                        + " old value).%n",
+                ttlMillis,
+                SHORT_PENDING_JOIN_TTL_MILLIS,
+                BackendVerificationConfig.DEFAULT_PENDING_JOIN_TTL_MILLIS
+        );
+    }
+
+    /**
+     * A backend pinned to a release older than the newest its protocol covers is claiming something
+     * the proxy cannot check and will act on.
+     *
+     * <p>{@code backend.<name>.protocol} selects a codec, and operators reasonably set it once and
+     * forget it. That was harmless while a protocol number meant one release. It stopped being
+     * harmless at 1.26.44, which kept protocol 2168 and changed a packet layout: a backend still
+     * pinned to {@code 1.26.40} now tells the proxy to write scoreboard removals in the old shape, and
+     * every removal that backend broadcasts is relayed corrupt to every player on it. Nothing else
+     * would report that - the protocol numbers agree, the codec loads, the join works, and players
+     * drop later with no reason attached.
+     *
+     * <p>Not an error, because an operator genuinely running an older release wants exactly this.
+     * {@code auto} is the answer for everyone else: the backend's own pong names its release, so
+     * nothing has to be kept in step by hand.
+     */
+    private void warnAboutAStalePinnedBackendRelease() {
+        for (BackendConfig backend : config.backends().values()) {
+            CanonicalProtocol pinned = backend.protocol();
+            String release = backend.declaredRelease();
+            if (pinned == null || release == null || release.equalsIgnoreCase(pinned.newestRelease())) {
+                continue;
+            }
+            System.out.printf(
+                    "WARNING: backend.%s.protocol pins Minecraft %s, but protocol %d also covers %s."
+                            + " The proxy will speak to %s as if it runs %s; if it actually runs a newer"
+                            + " release, packets whose layout changed within that protocol (scoreboard"
+                            + " removals, at 1.26.44) are relayed corrupt and players drop with no"
+                            + " reason. Set it to auto to read the release off the backend's own pong.%n",
+                    backend.name(),
+                    release,
+                    pinned.protocolVersion(),
+                    pinned.newestRelease(),
+                    backend.name(),
+                    release
+            );
+        }
     }
 
     private String backendProtocolDescription() {

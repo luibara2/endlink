@@ -15,6 +15,17 @@ public final class UnknownPacket implements BedrockPacket, BedrockPacketSerializ
     private int packetId;
     private ByteBuf payload;
 
+    /**
+     * Whether these bytes may be passed on to the recipient.
+     *
+     * <p>True for the ordinary case: an id this codec does not model, whose bytes are perfectly good
+     * and which the recipient understands. False when a serializer positively rejected the content -
+     * see {@link org.cloudburstmc.protocol.bedrock.codec.PacketValidationException}. Forwarding those
+     * hands the recipient something it will refuse, and a Bedrock client refuses by closing the
+     * connection with no message, so a relay drops them instead.</p>
+     */
+    private boolean relayable = true;
+
     @Override
     public void serialize(ByteBuf buffer, BedrockCodecHelper helper, UnknownPacket packet) {
         buffer.writeBytes(packet.payload, packet.payload.readerIndex(), packet.payload.readableBytes());

@@ -37,4 +37,20 @@ public record ClientLogin(
     public boolean isJavaEdition() {
         return bridgeClientAddress != null;
     }
+
+    /**
+     * The Minecraft version the client says it is running, or null if it did not say.
+     *
+     * <p>Worth having because the protocol number does not always identify the release: 1.26.40
+     * through 1.26.44 all negotiate 2168 and do not all write the same bytes. See
+     * {@link org.endstone.proxy.protocol.BedrockRelease}.
+     *
+     * <p>Self-reported and unsigned — it lives in the client data payload, which is signed only by
+     * the client's own key. Fine for choosing between two wire shapes, where lying costs the liar
+     * their own session and nobody else's; not a thing to make a security decision on.
+     */
+    public String gameVersion() {
+        Object value = skinData.get("GameVersion");
+        return value instanceof String version && !version.isBlank() ? version : null;
+    }
 }

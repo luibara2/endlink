@@ -15,6 +15,7 @@ import org.cloudburstmc.protocol.bedrock.data.EncodingSettings;
 import org.cloudburstmc.protocol.bedrock.data.PacketRecipient;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockPacketWrapper;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import org.cloudburstmc.protocol.bedrock.codec.PacketValidationException;
 import org.cloudburstmc.protocol.bedrock.packet.UnknownPacket;
 
 import java.util.List;
@@ -188,18 +189,27 @@ public abstract class BedrockPacketCodec extends MessageToMessageCodec<ByteBuf, 
                     verifyReencode(ctx, wrapper);
                 }
             } catch (Throwable t) {
-                // Also on stdout: an undecodable packet is forwarded as raw bytes, which is harmless
-                // between matching versions and silently corrupting across them, so it must be
-                // visible in the ordinary log rather than only in stderr.
+                // Two different failures reach here and they want opposite handling.
+                //
+                // Ordinarily this codec is simply incomplete: the bytes are valid, the recipient
+                // understands them, and forwarding the original payload is both harmless and the only
+                // way the feature keeps working. That is the default.
+                //
+                // But a serializer that positively rejected the content knows the bytes are wrong,
+                // and forwarding those is how one malformed packet becomes a disconnect with no
+                // message. Mark them so the relay can drop them instead. See PacketValidationException.
+                boolean relayable = !PacketValidationException.isValidationFailure(t);
                 System.out.printf(
-                        "UNDECODABLE PACKET id=%d protocol=%d forwarded as raw payload: %s%n",
+                        "UNDECODABLE PACKET id=%d protocol=%d %s: %s%n",
                         wrapper.getPacketId(),
                         this.codec.getProtocolVersion(),
+                        relayable ? "forwarded as raw payload" : "REJECTED, will not be relayed",
                         t
                 );
                 t.printStackTrace(System.err);
                 UnknownPacket unknownPacket = new UnknownPacket();
                 unknownPacket.setPacketId(wrapper.getPacketId());
+                unknownPacket.setRelayable(relayable);
                 unknownPacket.setPayload(wrapper.getPacketBuffer()
                         .retainedSlice()
                         .skipBytes(wrapper.getHeaderLength()));

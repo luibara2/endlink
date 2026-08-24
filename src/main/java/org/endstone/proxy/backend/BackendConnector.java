@@ -17,6 +17,7 @@ import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockClientInitiali
 import org.cloudburstmc.protocol.bedrock.packet.RequestNetworkSettingsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.TextPacket;
 import org.cloudburstmc.protocol.bedrock.packet.TransferPacket;
+import org.cloudburstmc.protocol.bedrock.netty.codec.compression.DecompressionLimit;
 import org.endstone.proxy.codec.CodecDefinitionState;
 import org.endstone.proxy.command.NetworkCommands;
 import org.endstone.proxy.command.ProxyCommandRegistry;
@@ -28,6 +29,7 @@ import org.endstone.proxy.config.ForcedHostsConfig;
 import org.endstone.proxy.config.ProxyPolicy;
 import org.endstone.proxy.auth.OfflineLoginForge;
 import org.endstone.proxy.session.ConnectedPlayerRegistry;
+import org.endstone.proxy.protocol.BedrockRelease;
 import org.endstone.proxy.protocol.CanonicalProtocol;
 import org.endstone.proxy.protocol.ProtocolBinding;
 import org.endstone.proxy.protocol.ProtocolRegistry;
@@ -45,6 +47,18 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 public final class BackendConnector {
+    /**
+     * The decompressed-batch cap for a backend connection: 256 MB, or
+     * {@code -Dbedrock.maxBackendDecompressedBytes=<bytes>} (0 for no limit).
+     *
+     * <p>Deliberately generous rather than absent. A backend is trusted enough not to need the
+     * anti-zip-bomb bound the listener has - the operator chose its address - but a bound still
+     * turns a corrupt or hostile stream into one failed connection instead of an out-of-memory that
+     * takes the whole proxy, and every player on it, down with it.
+     */
+    static final int BACKEND_MAX_DECOMPRESSED_BYTES =
+            Integer.getInteger("bedrock.maxBackendDecompressedBytes", 256 * 1024 * 1024);
+
     private final EventLoopGroup eventLoopGroup;
     private final BackendDirectory backendDirectory;
     private final ProxyCommandRegistry commandRegistry;
@@ -426,8 +440,13 @@ public final class BackendConnector {
                 disconnectClientOnClose,
                 activation
         );
+        // Hoisted out of the try below because the bootstrap's initSession lambda needs it: the
+        // backend's release decides how it writes a scoreboard removal, and protocol 2168 covers
+        // five releases that do not agree on that. See BedrockRelease.
+        String backendMinecraftVersion;
         try {
             BackendProtocol backendProtocol = backendProtocol(backendConfig, connection);
+            backendMinecraftVersion = backendProtocol.minecraftVersion();
             ProtocolBinding binding = resolveBinding(connection, backendConfig, backendProtocol);
             connection.setSessionProfile(ProxySessionProfile.from(binding));
             connection.setBackendLogin(backendLogin(connection, binding, backendConfig, backendProtocol));
@@ -484,12 +503,26 @@ public final class BackendConnector {
                             connection.setPendingBackend(backend);
                         }
                         backend.setCodec(connection.sessionProfile().backendCodec());
+                        // Must follow setCodec: it replaces the helper this writes to. The version
+                        // is the backend's own, off its pong, and it decides how this backend writes
+                        // a scoreboard removal - protocol 2168 alone does not say. See BedrockRelease.
+                        BedrockRelease.applyTo(backend, backendMinecraftVersion);
                         backend.getPeer().getChannel().pipeline().addLast(
                                 "endstone-backend-exception-logger",
                                 new LoggingExceptionHandler("backend")
                         );
                         CodecDefinitionState.installFallbacks(backend);
                         backend.getPeer().getCodecHelper().setEncodingSettings(EncodingSettings.UNLIMITED);
+                        // Same reasoning as the line above, one layer down. The decompression cap is
+                        // a defence against an anonymous client inflating a few kilobytes into
+                        // arbitrary heap; a backend is neither anonymous nor unbounded in what it
+                        // legitimately sends. A heavily modded server's join batch - item registry,
+                        // creative content and crafting data in one tick - goes past the 10 MB
+                        // default, and capping it there does not degrade anything: it throws out of
+                        // the decoder, kills the backend connection mid-join, and the player is
+                        // failed over with disconnect.lost and no reason they can see. This bounds
+                        // the backend leg somewhere it will not be reached instead.
+                        DecompressionLimit.set(backend.getPeer().getChannel(), BACKEND_MAX_DECOMPRESSED_BYTES);
                         backend.setPacketHandler(new BackendInitialPacketHandler(
                                 connection,
                                 backend,
@@ -563,16 +596,21 @@ public final class BackendConnector {
         // mixed — backends move one at a time — and speaking the global version to a backend that
         // has already moved gets the login rejected as LOGIN_FAILED_CLIENT_OLD.
         if (backendConfig.protocol() != null) {
+            // The release comes from what the operator actually wrote, not from the codec's name for
+            // the protocol they pinned. Those differ for every protocol number Mojang reused: pinning
+            // 2168 says nothing about whether the backend is 1.26.40 or 1.26.44, and reading "1.26.40"
+            // back out of the codec would assert the former for both. A pin that names no release
+            // leaves it null, which BedrockRelease reads as "not stated" rather than as "old".
             return new BackendProtocol(
                     backendConfig.protocol().protocolVersion(),
-                    backendConfig.protocol().minecraftVersion()
+                    backendConfig.declaredRelease()
             );
         }
         if (backendProtocolOverride != null) {
-            return new BackendProtocol(
-                    backendProtocolOverride.protocolVersion(),
-                    backendProtocolOverride.minecraftVersion()
-            );
+            // Same rule for the global pin, and null for the same reason. A fleet-wide value cannot
+            // name one fleet-wide release honestly anyway - the fleet is mixed during every upgrade,
+            // which is the situation the per-backend key exists for.
+            return new BackendProtocol(backendProtocolOverride.protocolVersion(), null);
         }
 
         BedrockPong pong;
@@ -609,15 +647,27 @@ public final class BackendConnector {
                     cause
             );
         }
+        // The client's *reported* release, not the codec's name for its protocol. Those are not the
+        // same thing on 2168, which one codec serves for 1.26.40 through 1.26.44, and the difference
+        // decides how this backend's scoreboard removals are read (see BedrockRelease). Taking the
+        // codec's name here would assume 1.26.40 of every backend whose probe failed, which is the
+        // one guess this proxy should not make. Falls back to the codec's name if the client did not
+        // say, which is no worse than what this line used to do unconditionally.
+        String assumedMinecraftVersion = connection.clientLogin() == null
+                ? null
+                : connection.clientLogin().gameVersion();
+        if (assumedMinecraftVersion == null) {
+            assumedMinecraftVersion = clientCodec.getMinecraftVersion();
+        }
         System.out.printf(
                 "WARNING: %s at %s did not answer the protocol probe (%s). Assuming it speaks the client's %s;"
                         + " set backend.protocol in the config to skip probing.%n",
                 backendConfig.name(),
                 backendConfig.address(),
                 cause.getMessage(),
-                versionName(clientCodec.getMinecraftVersion(), clientCodec.getProtocolVersion())
+                versionName(assumedMinecraftVersion, clientCodec.getProtocolVersion())
         );
-        return new BackendProtocol(clientCodec.getProtocolVersion(), clientCodec.getMinecraftVersion());
+        return new BackendProtocol(clientCodec.getProtocolVersion(), assumedMinecraftVersion);
     }
 
     private static String versionName(String minecraftVersion, int protocolVersion) {

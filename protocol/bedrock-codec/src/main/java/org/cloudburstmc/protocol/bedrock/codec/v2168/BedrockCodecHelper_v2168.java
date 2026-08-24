@@ -57,6 +57,33 @@ public class BedrockCodecHelper_v2168 extends BedrockCodecHelper_v975 {
     }
 
     /**
+     * Whether the peer this helper serves puts the constant {@code true} in a {@code RemoveScore}
+     * entry, ahead of the optional objective name's own presence flag.
+     *
+     * <p>Protocol 2168 covers five Minecraft releases, 1.26.40 through 1.26.44, and they do not all
+     * write that entry the same way. 1.26.44 gave the objective name the {@code isKeyedSetterGetter}
+     * trait, so cereal emits a fixed {@code true} in front of the optional; 1.26.40 to 1.26.43 do
+     * not, and 1.26.45 drops it again — but 1.26.45 is protocol 2169, so it can never reach this
+     * helper. The protocol number does not distinguish the two shapes, which is the whole problem:
+     * both sides negotiate 2168 and then disagree about a byte.
+     *
+     * <p>So the shape has to come from the peer's <em>Minecraft</em> version rather than its
+     * protocol version, and it is per-connection state because a proxy holds two peers at once and
+     * they are routinely on different releases. Defaults to {@code true}, the current release.
+     *
+     * @see org.cloudburstmc.protocol.bedrock.codec.v2168.serializer.SetScoreSerializer_v2168
+     */
+    private boolean removeScoreKeyedConstant = true;
+
+    public boolean isRemoveScoreKeyedConstant() {
+        return this.removeScoreKeyedConstant;
+    }
+
+    public void setRemoveScoreKeyedConstant(boolean removeScoreKeyedConstant) {
+        this.removeScoreKeyedConstant = removeScoreKeyedConstant;
+    }
+
+    /**
      * 1.26.40 drops the two presence names and leaves only an optional rich presence id.
      *
      * <p>See {@link org.cloudburstmc.protocol.bedrock.codec.v975.BedrockCodecHelper_v975#readPresenceConfiguration}

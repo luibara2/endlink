@@ -170,6 +170,7 @@ public record ProxyConfig(
                 backendName,
                 new InetSocketAddress(backendHost, backendPort),
                 backendProtocolFor(properties, backendName),
+                backendReleaseFor(properties, backendName),
                 dropSubChunkRequestsFor(properties, backendName)
         );
         Map<String, BackendConfig> backends = backendConfigs(properties, defaultBackend);
@@ -212,7 +213,8 @@ public record ProxyConfig(
                                 "backendVerification.sharedSecret",
                                 BackendVerificationConfig.DEFAULT_SHARED_SECRET
                         ),
-                        intProperty(properties, "backendVerification.pendingJoinTtlMillis", 600_000),
+                        intProperty(properties, "backendVerification.pendingJoinTtlMillis",
+                                (int) BackendVerificationConfig.DEFAULT_PENDING_JOIN_TTL_MILLIS),
                         intProperty(properties, "backendVerification.requestSkewMillis", 30_000)
                 ),
                 new ProxyPolicy(
@@ -259,7 +261,8 @@ public record ProxyConfig(
         properties.setProperty("backendVerification.host", "127.0.0.1");
         properties.setProperty("backendVerification.port", "19135");
         properties.setProperty("backendVerification.sharedSecret", BackendVerificationConfig.DEFAULT_SHARED_SECRET);
-        properties.setProperty("backendVerification.pendingJoinTtlMillis", "600000");
+        properties.setProperty("backendVerification.pendingJoinTtlMillis",
+                Long.toString(BackendVerificationConfig.DEFAULT_PENDING_JOIN_TTL_MILLIS));
         properties.setProperty("backendVerification.requestSkewMillis", "30000");
         properties.setProperty("failover.enabled", "true");
         properties.setProperty("failover.fallbacks", "default");
@@ -320,6 +323,23 @@ public record ProxyConfig(
         return CanonicalProtocol.fromConfig(ConfigValues.stripInlineComment(value));
     }
 
+    /**
+     * The exact release {@code backend.<name>.protocol} named, or null when it named a bare protocol
+     * number or was left unset.
+     *
+     * <p>Read from the same property as {@link #backendProtocolFor}, deliberately: asking the operator
+     * for the release in a second key would let the two disagree. What it must not do is fall back to
+     * the codec's name for the protocol, which is where the release used to come from and is wrong
+     * whenever one protocol number spans releases.
+     */
+    private static String backendReleaseFor(Properties properties, String name) {
+        String value = properties.getProperty("backend." + name + ".protocol");
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return CanonicalProtocol.declaredRelease(ConfigValues.stripInlineComment(value));
+    }
+
     /** See {@link BackendConfig#dropSubChunkRequests()} for why a backend would want this. */
     private static boolean dropSubChunkRequestsFor(Properties properties, String name) {
         return booleanProperty(properties, "backend." + name + ".dropSubChunkRequests", false);
@@ -369,6 +389,7 @@ public record ProxyConfig(
                     name,
                     new InetSocketAddress(host, parsedPort),
                     backendProtocolFor(properties, name),
+                    backendReleaseFor(properties, name),
                     dropSubChunkRequestsFor(properties, name)
             ));
         }

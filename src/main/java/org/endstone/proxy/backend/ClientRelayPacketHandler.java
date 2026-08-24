@@ -26,6 +26,7 @@ import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action
 import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.TransferItemStackRequestAction;
 import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.ItemUseTransaction;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import org.cloudburstmc.protocol.bedrock.packet.UnknownPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ItemStackRequestPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
 import org.cloudburstmc.protocol.bedrock.packet.AnimatePacket;
@@ -100,6 +101,22 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
                 return PacketSignal.HANDLED;
             }
             connection.client().disconnect("Backend is not connected");
+            return PacketSignal.HANDLED;
+        }
+
+        if (packet instanceof UnknownPacket unknownPacket && !unknownPacket.isRelayable()) {
+            // The same rule as the clientbound path, in the direction that protects the backend. A
+            // client is free to send anything, so a malformed serverbound packet is the ordinary
+            // shape of both a broken client and a hostile one; relaying it lets that client end its
+            // own session on the backend, and on a shared backend that is a nuisance others notice.
+            // See PacketValidationException.
+            System.out.printf(
+                    "Dropped a malformed packet id=%d from %s rather than relaying it to backend %s."
+                            + " The reason is on the UNDECODABLE line above.%n",
+                    unknownPacket.getPacketId(),
+                    connection.client().getSocketAddress(),
+                    connection.backendName()
+            );
             return PacketSignal.HANDLED;
         }
 

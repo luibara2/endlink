@@ -14,8 +14,6 @@ import static sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET;
 
 public class SnappyCompression implements BatchCompression {
 
-    private static final int MAX_DECOMPRESSED_BYTES = Integer.getInteger("bedrock.maxDecompressedBytes", 1024 * 1024 * 10);
-
     private static final ThreadLocal<short[]> TABLE = ThreadLocal.withInitial(() -> new short[16384]);
 
     @Override
@@ -76,8 +74,12 @@ public class SnappyCompression implements BatchCompression {
             long inputEndAddress = inputAddress + direct.readableBytes();
 
             int uncompressedLength = SnappyRawDecompressor.getUncompressedLength(null, inputAddress, inputEndAddress);
-            if (uncompressedLength > MAX_DECOMPRESSED_BYTES) {
-                throw new DataFormatException("Inflated data exceeds maximum size");
+            // Per-channel, not per-process: a proxy's two peers do not deserve the same bound.
+            // See DecompressionLimit.
+            int maxDecompressedBytes = DecompressionLimit.forChannel(ctx);
+            if (maxDecompressedBytes > 0 && uncompressedLength > maxDecompressedBytes) {
+                throw new DataFormatException(
+                        DecompressionLimit.breachMessage(uncompressedLength, maxDecompressedBytes));
             }
             output.ensureWritable(uncompressedLength);
 

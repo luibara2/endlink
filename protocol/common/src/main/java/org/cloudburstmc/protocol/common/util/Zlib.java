@@ -67,7 +67,14 @@ public class Zlib {
                     // unauthenticated client can send a small zlib batch that inflates without
                     // bound (a "zip bomb"), forcing arbitrary heap allocation on an I/O thread
                     // before login. The sibling SnappyCompression.decode enforces the same cap.
-                    throw new DataFormatException("Inflated data exceeds maximum size of " + maxSize + " bytes");
+                    //
+                    // The size that was refused goes in the message, not just the cap. "Over the
+                    // limit" cannot distinguish a bomb from a legitimate batch that has outgrown the
+                    // bound, and that distinction is exactly what an operator has to make; without
+                    // the number there is nothing to make it from.
+                    throw new DataFormatException("Inflated data exceeds maximum size: "
+                            + decompressed.writerIndex() + " bytes > " + maxSize
+                            + " (raise with -Dbedrock.maxDecompressedBytes)");
                 }
             }
             decompressed.retain();

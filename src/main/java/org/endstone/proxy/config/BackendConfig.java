@@ -11,6 +11,12 @@ import java.net.InetSocketAddress;
  *                 is during an upgrade, since backends are moved one at a time. Without it the proxy
  *                 speaks the global version to every backend, and the ones already upgraded reject
  *                 the login as {@code LOGIN_FAILED_CLIENT_OLD}.
+ * @param declaredRelease the exact Minecraft release the operator named in that same setting, or
+ *                 null when they named a bare protocol number or left it on {@code auto}. Not the
+ *                 same thing as {@code protocol}: one protocol number covers several releases
+ *                 (2168 is 1.26.40 through 1.26.44) and they do not all share a wire format, so
+ *                 the codec's own name for a protocol must never be read back as the release.
+ *                 See {@link org.endstone.proxy.protocol.BedrockRelease}.
  * @param dropSubChunkRequests stop forwarding the client's {@code SubChunkRequestPacket} to this
  *                 backend, set with {@code backend.<name>.dropSubChunkRequests=true}.
  *                 <p>A Bedrock client asks for terrain one sub-chunk at a time only because a server
@@ -27,6 +33,7 @@ public record BackendConfig(
         String name,
         InetSocketAddress address,
         CanonicalProtocol protocol,
+        String declaredRelease,
         boolean dropSubChunkRequests
 ) {
     public BackendConfig {
@@ -38,11 +45,15 @@ public record BackendConfig(
         }
     }
 
+    public BackendConfig(String name, InetSocketAddress address, CanonicalProtocol protocol, boolean dropSubChunkRequests) {
+        this(name, address, protocol, null, dropSubChunkRequests);
+    }
+
     public BackendConfig(String name, InetSocketAddress address, CanonicalProtocol protocol) {
-        this(name, address, protocol, false);
+        this(name, address, protocol, null, false);
     }
 
     public BackendConfig(String name, InetSocketAddress address) {
-        this(name, address, null, false);
+        this(name, address, null, null, false);
     }
 }

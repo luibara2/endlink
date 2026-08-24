@@ -686,6 +686,22 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
         }
         if (packet instanceof UnknownPacket unknownPacket) {
             logUnknownBackendPacket(unknownPacket);
+            if (!unknownPacket.isRelayable()) {
+                // A serializer said these bytes are invalid, not merely unmodelled. Passing them on
+                // is how a backend or one of its plugins turns a malformed packet into every
+                // recipient closing the connection with BadPacket and no message; the client blames
+                // the network and the log says nothing. Losing this one packet costs whatever effect
+                // it carried and nothing else. See PacketValidationException.
+                System.out.printf(
+                        "Dropped a malformed packet id=%d from backend %s rather than relaying it to"
+                                + " %s; it would have disconnected them. The reason is on the"
+                                + " UNDECODABLE line above.%n",
+                        unknownPacket.getPacketId(),
+                        backendName,
+                        connection.clientLogin().authData().displayName()
+                );
+                return PacketSignal.HANDLED;
+            }
             if (unknownPacket.getPacketId() == COMMAND_OUTPUT_PACKET_ID) {
                 System.out.printf(
                         "Dropping undecodable backend command output packet %d from %s to avoid client disconnect.%n",

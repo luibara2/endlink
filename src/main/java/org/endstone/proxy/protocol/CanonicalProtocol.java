@@ -15,14 +15,53 @@ public enum CanonicalProtocol {
     V1_26_0(Bedrock_v924.CODEC),
     V1_26_10(Bedrock_v944.CODEC),
     V1_26_20(Bedrock_v975.CODEC),
-    V1_26_30(Bedrock_v1001.CODEC),
+    // 1.26.30, .32, .33 and .35 are all protocol 1001 and all decode on this one codec.
+    V1_26_30(Bedrock_v1001.CODEC, "1.26.35"),
     // Mojang renumbered at 1.26.40: 1001 -> 2168, not the ~1010 the earlier steps would suggest.
-    V1_26_40(Bedrock_v2168.CODEC);
+    // 1.26.40 through 1.26.44 then all shipped under 2168 — and 1.26.44 changed a packet layout
+    // anyway, which is why naming the release matters and the protocol number is not enough. See
+    // BedrockRelease.
+    V1_26_40(Bedrock_v2168.CODEC, "1.26.44");
 
     private final BedrockCodec codec;
 
+    /**
+     * The newest Minecraft release this codec speaks, inclusive. Equal to the codec's own version for
+     * every protocol Mojang numbered once; larger for the two they did not.
+     *
+     * <p>This exists so a config can name the release the operator is <em>actually</em> running. Before
+     * it, {@code backend.hub.protocol=1.26.44} threw "Unsupported backend protocol" at startup and the
+     * only accepted spelling was {@code 1.26.40} — a value that then had to be read back as the
+     * backend's release, and was wrong for every backend that had moved on.
+     */
+    private final String newestRelease;
+
     CanonicalProtocol(BedrockCodec codec) {
+        this(codec, codec.getMinecraftVersion());
+    }
+
+    CanonicalProtocol(BedrockCodec codec, String newestRelease) {
         this.codec = codec;
+        this.newestRelease = newestRelease;
+    }
+
+    /** The newest Minecraft release this codec speaks, inclusive. */
+    public String newestRelease() {
+        return newestRelease;
+    }
+
+    /** Whether {@code minecraftVersion} is one of the releases this codec speaks. */
+    public boolean coversRelease(String minecraftVersion) {
+        int[] parsed = BedrockRelease.parse(minecraftVersion);
+        if (parsed == null) {
+            return false;
+        }
+        int[] oldest = BedrockRelease.parse(minecraftVersion());
+        int[] newest = BedrockRelease.parse(newestRelease);
+        return oldest != null
+                && newest != null
+                && BedrockRelease.compare(minecraftVersion, oldest[0], oldest[1], oldest[2]) >= 0
+                && BedrockRelease.compare(minecraftVersion, newest[0], newest[1], newest[2]) <= 0;
     }
 
     public BedrockCodec codec() {
@@ -46,16 +85,54 @@ public enum CanonicalProtocol {
         return values[values.length - 1];
     }
 
+    /**
+     * What a configured {@code protocol} value names.
+     *
+     * @param protocol the codec to speak
+     * @param release  the Minecraft release the operator named, or null when they named a bare
+     *                 protocol number. Null is not "1.26.40" — it means the config did not say, and a
+     *                 protocol number cannot say, because one number covers several releases that do
+     *                 not all share a wire format.
+     */
+    public record Declared(CanonicalProtocol protocol, String release) {
+    }
+
     public static CanonicalProtocol fromConfig(String value) {
+        Declared declared = declare(value);
+        return declared == null ? null : declared.protocol();
+    }
+
+    /**
+     * The Minecraft release a configured {@code protocol} value names, or null for {@code auto}, a
+     * blank value, or a bare protocol number.
+     *
+     * <p>Kept separate from {@link #fromConfig} because the two answer different questions and only
+     * one of them has a right to a default. Reading the codec's own {@code minecraftVersion()} back
+     * out of {@link #fromConfig}'s result looks like the release and is not: for protocol 2168 it is
+     * "1.26.40" whatever the backend actually runs, which silently corrupts every scoreboard removal
+     * from a 1.26.44 backend that happens to be pinned.
+     */
+    public static String declaredRelease(String value) {
+        Declared declared = declare(value);
+        return declared == null ? null : declared.release();
+    }
+
+    public static Declared declare(String value) {
         if (value == null || value.isBlank() || "auto".equalsIgnoreCase(value.trim())) {
             return null;
         }
         String normalized = value.trim();
         for (CanonicalProtocol protocol : values()) {
-            if (Integer.toString(protocol.protocolVersion()).equals(normalized)
-                    || protocol.minecraftVersion().equalsIgnoreCase(normalized)
-                    || protocol.minecraftVersion().substring(2).equalsIgnoreCase(normalized)) {
-                return protocol;
+            if (Integer.toString(protocol.protocolVersion()).equals(normalized)) {
+                return new Declared(protocol, null);
+            }
+        }
+        // "26.40" has always been accepted alongside "1.26.40"; normalise before matching so the
+        // release carried forward is a full version string either way.
+        String release = normalized.startsWith("1.") ? normalized : "1." + normalized;
+        for (CanonicalProtocol protocol : values()) {
+            if (protocol.coversRelease(release)) {
+                return new Declared(protocol, release);
             }
         }
         throw new IllegalArgumentException("Unsupported backend protocol: " + value);

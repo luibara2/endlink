@@ -9,8 +9,6 @@ import org.cloudburstmc.protocol.bedrock.data.PacketCompressionAlgorithm;
 import org.cloudburstmc.protocol.common.util.Zlib;
 
 public class ZlibCompression implements BatchCompression {
-    private static final int MAX_DECOMPRESSED_BYTES = Integer.getInteger("bedrock.maxDecompressedBytes", 1024 * 1024 * 10);
-
     private final Zlib zlib;
 
     @Getter @Setter
@@ -33,7 +31,9 @@ public class ZlibCompression implements BatchCompression {
 
     @Override
     public ByteBuf decode(ChannelHandlerContext ctx, ByteBuf msg) throws Exception {
-        return zlib.inflate(msg, MAX_DECOMPRESSED_BYTES);
+        // Per-channel, not per-process: a proxy's two peers do not deserve the same bound.
+        // See DecompressionLimit.
+        return zlib.inflate(msg, DecompressionLimit.forChannel(ctx));
     }
 
     @Override
