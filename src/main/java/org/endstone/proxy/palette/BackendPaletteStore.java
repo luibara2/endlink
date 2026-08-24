@@ -23,6 +23,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Every backend's registries, learned from live sessions and remembered across restarts.
@@ -37,6 +40,15 @@ import java.util.TreeSet;
  * <p>Nothing here is a security boundary: the cache holds only what backends already send every
  * client at login. It is still read with a size limit, because a corrupt file should fail the load,
  * not the process.</p>
+ *
+ * <p>Learning happens on the packet thread; writing does not. Definitions arrive in a burst — one
+ * backend sent 79 {@code SyncEntityPropertyPacket}s during a single join — and each one used to
+ * re-serialise, GZIP and replace the entire cache while holding this monitor. At 2353 items that is
+ * ~195 ms per packet, and the 15 s it added to the join overran the client's timeout, so a large
+ * backend was simply unjoinable. Mutators now only mark the store dirty; one shared daemon thread
+ * does the write a moment later, which collapses the whole burst into a single one. The cost is a
+ * window in which what has been learned is not yet on disk, closed by {@link #flush()} at
+ * shutdown.</p>
  */
 public final class BackendPaletteStore {
     private static final long MAX_CACHE_BYTES = 64L * 1024 * 1024;
@@ -53,10 +65,31 @@ public final class BackendPaletteStore {
     private static final String VERSION = "version";
     private static final String COMPONENT_DATA = "componentData";
 
+    /**
+     * How long a mutation waits for the rest of its burst before the cache is rewritten.
+     *
+     * <p>Measured from the first dirtying mutation rather than the last, so a backend that keeps
+     * teaching the proxy things cannot postpone the write indefinitely. A join's definition burst is
+     * contiguous and well under this, so it produces one write.</p>
+     */
+    private static final long FLUSH_DELAY_MILLIS = 1000;
+
+    /** One daemon thread for every store, so a write never lands on a packet thread or spawns one. */
+    private static final ScheduledExecutorService FLUSHER = Executors.newSingleThreadScheduledExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "endlink-palette-cache");
+        thread.setDaemon(true);
+        return thread;
+    });
+
     private final Path cacheFile;
     private final Map<String, BackendPalette> palettes = new LinkedHashMap<>();
     private final Set<String> reported = new java.util.HashSet<>();
     private final boolean enabled;
+    /** Serialises the writes themselves, so a later snapshot can never be overwritten by an earlier one. */
+    private final Object writeLock = new Object();
+    /** Both guarded by this store's monitor, alongside {@link #palettes}. */
+    private boolean dirty;
+    private boolean flushScheduled;
 
     private BackendPaletteStore(Path cacheFile, boolean enabled) {
         this.cacheFile = cacheFile;
@@ -126,7 +159,7 @@ public final class BackendPaletteStore {
             return false;
         }
         palettes.put(backendName, existing.withItems(items));
-        save();
+        markDirty();
         return true;
     }
 
@@ -139,7 +172,7 @@ public final class BackendPaletteStore {
             return false;
         }
         palettes.put(backendName, existing.withEntityIdentifiers(identifiers));
-        save();
+        markDirty();
         return true;
     }
 
@@ -152,7 +185,7 @@ public final class BackendPaletteStore {
             return false;
         }
         palettes.put(backendName, existing.withBlockProperties(blockProperties));
-        save();
+        markDirty();
         return true;
     }
 
@@ -172,7 +205,7 @@ public final class BackendPaletteStore {
             return false;
         }
         palettes.put(backendName, existing.withBlockIdsHashed(blockIdsHashed));
-        save();
+        markDirty();
         return true;
     }
 
@@ -192,7 +225,7 @@ public final class BackendPaletteStore {
             return false;
         }
         palettes.put(backendName, updated);
-        save();
+        markDirty();
         return true;
     }
 
@@ -211,10 +244,70 @@ public final class BackendPaletteStore {
         return true;
     }
 
-    private void save() {
+    /**
+     * Notes that the cache no longer matches memory and schedules the write.
+     *
+     * <p>Called with this store's monitor held, from the packet thread. It must stay cheap: the
+     * whole point is that a mutation costs a flag, not a full re-serialisation.</p>
+     */
+    private void markDirty() {
         if (cacheFile == null) {
             return;
         }
+        dirty = true;
+        if (!flushScheduled) {
+            flushScheduled = true;
+            FLUSHER.schedule(this::scheduledFlush, FLUSH_DELAY_MILLIS, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void scheduledFlush() {
+        // Cleared before the snapshot is taken, so a mutation arriving during this write schedules
+        // another one rather than being silently left in memory until something else dirties the
+        // store. The cost of the race the other way is one redundant write.
+        synchronized (this) {
+            flushScheduled = false;
+        }
+        flush();
+    }
+
+    /**
+     * Writes anything learned since the last write, blocking until it is on disk.
+     *
+     * <p>Called at shutdown, because the deferred write is the one thing standing between a burst of
+     * definitions and the cache being a restart behind.</p>
+     */
+    public void flush() {
+        if (cacheFile == null) {
+            return;
+        }
+        // The snapshot is taken and written under one lock, so two concurrent flushes cannot reorder
+        // and leave the older of them as the one on disk.
+        synchronized (writeLock) {
+            Map<String, BackendPalette> snapshot;
+            synchronized (this) {
+                if (!dirty) {
+                    return;
+                }
+                dirty = false;
+                // A shallow copy is a real snapshot: BackendPalette is an immutable record, and a
+                // mutator replaces its entry rather than editing it in place.
+                snapshot = new LinkedHashMap<>(palettes);
+            }
+            // Serialising and compressing outside the monitor is what keeps the packet thread out of
+            // this: a mutation arriving mid-write waits for a map copy, not for GZIP and a disk.
+            if (!write(writeTo(snapshot))) {
+                synchronized (this) {
+                    // Nothing was lost from memory, but the file is behind again. No reschedule: a
+                    // failing disk should not turn into a write every second, and the next mutation
+                    // or the shutdown flush will retry.
+                    dirty = true;
+                }
+            }
+        }
+    }
+
+    private boolean write(NbtMap root) {
         Path temporary = cacheFile.resolveSibling(cacheFile.getFileName() + ".tmp");
         try {
             Path parent = cacheFile.getParent();
@@ -223,23 +316,26 @@ public final class BackendPaletteStore {
             }
             try (OutputStream out = Files.newOutputStream(temporary);
                  NBTOutputStream writer = NbtUtils.createGZIPWriter(out)) {
-                writer.writeTag(writeTo());
+                writer.writeTag(root);
             }
             // Replace in one step: a half-written cache read back at the next start would be a
             // wrong union, which is worse than no cache at all.
             Files.move(temporary, cacheFile, StandardCopyOption.REPLACE_EXISTING);
+            return true;
         } catch (IOException e) {
             System.out.printf("Could not write the backend palette cache %s: %s%n", cacheFile, e.getMessage());
             try {
                 Files.deleteIfExists(temporary);
             } catch (IOException ignored) {
             }
+            return false;
         }
     }
 
-    private NbtMap writeTo() {
+    /** Serialises a snapshot, never the live map: this runs off the store's monitor. */
+    private static NbtMap writeTo(Map<String, BackendPalette> snapshot) {
         NbtMapBuilder backends = NbtMap.builder();
-        for (Map.Entry<String, BackendPalette> entry : palettes.entrySet()) {
+        for (Map.Entry<String, BackendPalette> entry : snapshot.entrySet()) {
             BackendPalette palette = entry.getValue();
             List<NbtMap> items = new ArrayList<>(palette.items().size());
             for (ItemDefinition item : palette.items()) {

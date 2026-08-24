@@ -21,6 +21,7 @@ import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -335,6 +336,8 @@ final class CrossBackendPaletteTest {
         store.learnEntityProperty("skygen", NbtMap.builder().putString("type", "skygen:generator").build());
         store.learnBlockProperties("skygen", List.of(
                 new BlockPropertyData("skygen:generator", NbtMap.builder().putInt("id", 7).build())));
+        // Writes are deferred and coalesced; this is the shutdown flush.
+        store.flush();
 
         BackendPaletteStore reloaded = BackendPaletteStore.load(cacheFile);
 
@@ -348,6 +351,39 @@ final class CrossBackendPaletteTest {
         assertEquals("skygen:galaxy_sword", skygen.items().get(2).getIdentifier());
         assertEquals(1, EntityPalettes.idList(skygen.entityIdentifiers()).size());
         assertEquals(1, skygen.entityProperties().size());
+    }
+
+    /**
+     * Learning must cost nothing on disk while it happens.
+     *
+     * <p>Every mutation used to rewrite, GZIP and replace the whole cache synchronously — 79 times
+     * during one join against a backend with 2353 items, ~195 ms each, on the packet thread. The
+     * 15 s that added overran the client's join timeout, so a large backend could not be joined
+     * through the proxy at all.</p>
+     */
+    @Test
+    void aBurstOfDefinitionsCostsNoWritesUntilItIsFlushed(@TempDir Path dir) throws Exception {
+        Path cacheFile = dir.resolve("cache").resolve("palettes.nbt");
+        BackendPaletteStore store = BackendPaletteStore.load(cacheFile);
+
+        store.learnItems("skygen", skygenItems());
+        for (int i = 0; i < 79; i++) {
+            // Still reports what actually changed: the caller suppresses the packet when it did not.
+            assertTrue(store.learnEntityProperty(
+                    "skygen", NbtMap.builder().putString("type", "skygen:entity" + i).build()));
+        }
+
+        assertFalse(Files.exists(cacheFile), "learning must not write the cache on the packet thread");
+
+        store.flush();
+        assertTrue(Files.exists(cacheFile));
+        assertEquals(79, BackendPaletteStore.load(cacheFile).palette("skygen").entityProperties().size());
+
+        // Nothing has been learned since, so there is nothing to write: a flush of a clean store must
+        // not touch the file at all.
+        Files.delete(cacheFile);
+        store.flush();
+        assertFalse(Files.exists(cacheFile), "a clean store must not rewrite the cache");
     }
 
     @Test

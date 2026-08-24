@@ -507,6 +507,9 @@ public final class BedrockProxyListener {
                 channel.close().awaitUninterruptibly();
             }
         } finally {
+            // The palette cache is written a beat after it is learned, so the last thing a session
+            // taught the proxy is still only in memory at this point.
+            backendPaletteStore.flush();
             backendVerificationServer.close();
             eventLoopGroup.shutdownGracefully();
             stopped.countDown();
