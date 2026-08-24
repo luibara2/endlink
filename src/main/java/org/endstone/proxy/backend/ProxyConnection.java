@@ -17,6 +17,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 public final class ProxyConnection {
     /** Packet tracing is an opt-in diagnostic and is disabled in production by default. */
@@ -78,6 +80,8 @@ public final class ProxyConnection {
     private BackendSwitchReset backendSwitchReset;
     private long packetTraceUntilNanos;
     private final long createdAtNanos = System.nanoTime();
+    /** Null until the backend's pack list has been merged; see {@link #isProxyServedPack}. */
+    private Set<UUID> proxyServedPacks;
     private long clientboundTraceSequence;
     private long serverboundTraceSequence;
     private boolean firstLevelChunkForwarded;
@@ -202,6 +206,35 @@ public final class ProxyConnection {
      */
     public BackendPackCache backendPackCache() {
         return backendPackCache;
+    }
+
+    /**
+     * Records which packs the proxy told this client it would serve itself.
+     *
+     * <p>Decided once, when the backend's pack list is merged, and read again when the client asks for
+     * the bytes. The two have to agree: the merge can decide the proxy's cached copy of a pack is out
+     * of date and leave the backend to serve it, and answering the chunk request from the proxy anyway
+     * would hand the client exactly the copy that was just rejected.</p>
+     */
+    public synchronized void rememberProxyServedPacks(Set<UUID> packIds) {
+        this.proxyServedPacks = packIds == null ? null : Set.copyOf(packIds);
+    }
+
+    /**
+     * Whether the proxy is the one serving this pack to this client.
+     *
+     * <p>Before the merge has run there is no decision to consult, so this falls back to what the
+     * registry holds - the behaviour every join had before the decision existed.</p>
+     */
+    public boolean isProxyServedPack(UUID packId) {
+        Set<UUID> decided;
+        synchronized (this) {
+            decided = proxyServedPacks;
+        }
+        if (decided == null) {
+            return proxyResourcePackRegistry.isProxyPack(packId);
+        }
+        return decided.contains(packId);
     }
 
     /**

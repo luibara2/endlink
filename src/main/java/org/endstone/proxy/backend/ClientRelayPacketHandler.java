@@ -309,9 +309,12 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
         // Proxy resource pack serving during the resource pack negotiation phase.
         ProxyResourcePackRegistry registry = connection.proxyResourcePackRegistry();
         if (!registry.isEmpty()) {
-            // Serve proxy pack chunks directly from the proxy.
+            // Serve proxy pack chunks directly from the proxy - but only the ones this client was
+            // actually told the proxy would serve. Holding a pack is not the same as being the right
+            // source for it: the merge can find the cached copy out of date and leave the backend to
+            // send it, and answering here anyway would deliver the copy it just rejected.
             if (packet instanceof ResourcePackChunkRequestPacket chunkRequest
-                    && registry.isProxyPack(chunkRequest.getPackId())) {
+                    && connection.isProxyServedPack(chunkRequest.getPackId())) {
                 registry.sendChunk(connection.client(), chunkRequest.getPackId(), chunkRequest.getChunkIndex());
                 return PacketSignal.HANDLED;
             }
@@ -515,7 +518,7 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
         ArrayList<String> backendPackIds = new ArrayList<>();
         for (String packId : response.getPackIds()) {
             UUID uuid = extractPackUuid(packId);
-            if (uuid != null && registry.isProxyPack(uuid)) {
+            if (uuid != null && connection.isProxyServedPack(uuid)) {
                 // Send DataInfo for this proxy pack directly to the client.
                 registry.sendDataInfo(connection.client(), uuid);
             } else {

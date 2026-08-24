@@ -41,6 +41,27 @@ final class BackendPackCacheTest {
         return buffer.toByteArray();
     }
 
+    /** The same pack with more in it: an edit that keeps the manifest version, as a real one does. */
+    private static byte[] paddedPack(UUID uuid, String name, String version, int extraBytes) throws Exception {
+        String manifest = """
+                {
+                  "format_version": 2,
+                  "header": { "name": "%s", "uuid": "%s", "version": %s },
+                  "modules": [ { "type": "resources", "uuid": "%s", "version": %s } ]
+                }
+                """.formatted(name, uuid, version, UUID.randomUUID(), version);
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(buffer)) {
+            zip.putNextEntry(new ZipEntry("manifest.json"));
+            zip.write(manifest.getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("textures/item_texture.json"));
+            zip.write(new byte[extraBytes]);
+            zip.closeEntry();
+        }
+        return buffer.toByteArray();
+    }
+
     private static byte[] sha256(byte[] data) throws Exception {
         return MessageDigest.getInstance("SHA-256").digest(data);
     }
@@ -112,6 +133,75 @@ final class BackendPackCacheTest {
         assertTrue(cache.has(PACK_UUID, new int[]{3, 9, 9}));
         // A newer version on the backend is worth fetching.
         assertFalse(cache.has(PACK_UUID, new int[]{4, 0, 1}));
+    }
+
+    @Test
+    void aPackEditedWithoutAVersionBumpIsRelearned(@TempDir Path dir) throws Exception {
+        // The way a server's pack actually changes: edit the files, keep the manifest version. The
+        // proxy used to compare versions alone, decide its copy was current, and go on serving the
+        // previous edit to every player for the rest of its life - a pack whose item atlas no longer
+        // covers the backend's items, which the client draws as no icon at all.
+        ProxyResourcePackRegistry registry = ProxyResourcePackRegistry.mutableEmpty();
+        BackendPackCache cache = BackendPackCache.of(dir, registry);
+        byte[] before = pack(PACK_UUID, "Skygen", "[4, 0, 0]");
+        byte[] after = paddedPack(PACK_UUID, "Skygen", "[4, 0, 0]", 512);
+
+        assertTrue(cache.store(PACK_UUID, before, sha256(before)));
+        assertTrue(cache.store(PACK_UUID, after, sha256(after)));
+
+        assertEquals(after.length, registry.findByUuid(PACK_UUID).data().length);
+        assertEquals(1, registry.packs().size());
+        // Re-storing the same bytes is not a change, so it does not churn the file or the pack order.
+        assertFalse(cache.store(PACK_UUID, after, sha256(after)));
+    }
+
+    @Test
+    void anEditedPackIsNoLongerConsideredCurrent(@TempDir Path dir) throws Exception {
+        ProxyResourcePackRegistry registry = ProxyResourcePackRegistry.mutableEmpty();
+        BackendPackCache cache = BackendPackCache.of(dir, registry);
+        byte[] cached = pack(PACK_UUID, "Skygen", "[4, 0, 0]");
+        cache.store(PACK_UUID, cached, sha256(cached));
+        int[] sameVersion = {4, 0, 0};
+
+        assertTrue(cache.hasCurrent(PACK_UUID, sameVersion, cached.length, sha256(cached)));
+        // Either the size or the hash disagreeing is enough to know the copy is out of date.
+        assertFalse(cache.hasCurrent(PACK_UUID, sameVersion, cached.length + 1, null));
+        assertFalse(cache.hasCurrent(PACK_UUID, sameVersion, 0,
+                sha256("a different edit".getBytes(StandardCharsets.UTF_8))));
+        // A backend that says nothing about either leaves the cached copy alone, as before.
+        assertTrue(cache.hasCurrent(PACK_UUID, sameVersion, 0, null));
+        // And an older backend copy still does not displace a newer cached one.
+        assertTrue(cache.hasCurrent(PACK_UUID, new int[]{3, 0, 0}, 999_999, null));
+    }
+
+    @Test
+    void aHandPlacedPackIsNotReplacedByTheBackendsCopy(@TempDir Path dir) throws Exception {
+        Path res = Files.createDirectories(dir.resolve("res"));
+        Path cacheDir = Files.createDirectories(dir.resolve("cache/packs"));
+        Files.write(res.resolve("mine.mcpack"), pack(PACK_UUID, "Hand placed", "[4, 0, 0]"));
+        ProxyResourcePackRegistry registry = ProxyResourcePackRegistry.load(res, cacheDir);
+        BackendPackCache cache = BackendPackCache.of(cacheDir, registry);
+
+        // Overriding what the backend serves is the entire reason to put a pack in that directory.
+        assertFalse(cache.store(PACK_UUID, paddedPack(PACK_UUID, "Backend copy", "[4, 0, 0]", 512), null));
+        assertEquals("Hand placed", registry.findByUuid(PACK_UUID).name());
+    }
+
+    @Test
+    void relearningAPackLeavesItWhereItWasInTheStack(@TempDir Path dir) throws Exception {
+        // The registry's order becomes the client's pack stack order, which decides whose copy of a
+        // shared file wins. A relearned pack that jumped to the end would silently change that.
+        UUID other = UUID.fromString("11111111-2222-3333-4444-555555555555");
+        ProxyResourcePackRegistry registry = ProxyResourcePackRegistry.mutableEmpty();
+        BackendPackCache cache = BackendPackCache.of(dir, registry);
+        cache.store(PACK_UUID, pack(PACK_UUID, "First", "[1, 0, 0]"), null);
+        cache.store(other, pack(other, "Second", "[1, 0, 0]"), null);
+
+        cache.store(PACK_UUID, paddedPack(PACK_UUID, "First", "[1, 0, 0]", 256), null);
+
+        assertEquals(
+                java.util.List.of(PACK_UUID, other),
+                registry.packs().stream().map(ProxyResourcePackEntry::uuid).toList());
     }
 
     @Test

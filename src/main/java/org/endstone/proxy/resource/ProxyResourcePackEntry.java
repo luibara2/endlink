@@ -28,6 +28,16 @@ public record ProxyResourcePackEntry(
         return version[0] + "." + version[1] + "." + version[2];
     }
 
+    /**
+     * How to describe this pack when there is no backend entry to copy the description from.
+     *
+     * <p>Everything optional is empty, and that is the point. {@code subPackName} selects a sub-pack
+     * out of the manifest's {@code subpacks} list, so putting the pack's display name there names a
+     * sub-pack that does not exist; {@code contentId} identifies content the client is expected to
+     * hold a key for, and pairing one with an empty {@code contentKey} describes an encrypted pack
+     * nobody can decrypt. Both used to be filled in, and both are ways for a pack to load partially
+     * or not at all through the proxy while loading fine on a direct connection.</p>
+     */
     public ResourcePacksInfoPacket.Entry toInfoEntry() {
         // Local build constructor: (UUID, String version, long size,
         // String contentKey, String subPackName, String contentId,
@@ -37,8 +47,8 @@ public record ProxyResourcePackEntry(
                 versionString(),
                 (long) data.length,
                 "",             // contentKey
-                name,           // subPackName
-                uuid.toString(), // contentId
+                "",             // subPackName
+                "",             // contentId
                 false,          // scripting
                 false,          // raytracingCapable
                 false,          // addonPack

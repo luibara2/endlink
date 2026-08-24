@@ -76,7 +76,10 @@ final class BackendPackFetch {
                 continue;
             }
             int[] version = parseVersion(entry.getPackVersion());
-            if (cache.has(packId, version)) {
+            // hasCurrent, not has: a pack edited without a version bump is still advertised under the
+            // version the proxy already has, and skipping on the version alone is what let a stale
+            // copy be served for the rest of the proxy's life.
+            if (cache.hasCurrent(packId, version, entry.getPackSize(), null)) {
                 continue;
             }
             if (entry.getContentKey() != null && !entry.getContentKey().isEmpty()) {

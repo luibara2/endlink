@@ -1670,8 +1670,15 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
         if (packet instanceof ResourcePackDataInfoPacket dataInfo) {
             observedPacks.remove(dataInfo.getPackId());
             long size = dataInfo.getCompressedPackSize();
+            // hasCurrent, not has: this is the only moment the proxy ever sees a pack's real bytes, so
+            // deciding it already has one on the version alone means a pack edited without a version
+            // bump is never looked at again and the stale copy is served for ever.
             if (size <= 0 || size > BackendPackCache.MAX_PACK_BYTES
-                    || cache.has(dataInfo.getPackId(), ProxyResourcePackRegistry.parseVersion(dataInfo.getPackVersion()))) {
+                    || cache.hasCurrent(
+                            dataInfo.getPackId(),
+                            ProxyResourcePackRegistry.parseVersion(dataInfo.getPackVersion()),
+                            size,
+                            dataInfo.getHash())) {
                 return;
             }
             observedPacks.put(dataInfo.getPackId(), new ObservedPack(
@@ -1733,13 +1740,27 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
 
     private void handleMergedResourcePacksInfo(ResourcePacksInfoPacket backendInfo) {
         ProxyResourcePackRegistry registry = connection.proxyResourcePackRegistry();
-        ResourcePacksInfoPacket merged = registry.buildMergedInfo(backendInfo);
-        // Deliberately silent. The merge runs on every join and always did the same thing, so the
-        // line said nothing an operator could act on. The pack problem that *is* worth reporting —
-        // a backend serving packs the proxy does not have — still warns, from checkBackendPacks.
+        ProxyResourcePackRegistry.MergedPacksInfo merged = registry.buildMergedInfo(backendInfo);
+        // The client asks the proxy for the packs the merge kept and the backend for the rest, and the
+        // two answers have to come from the same decision; see ProxyConnection#isProxyServedPack.
+        connection.rememberProxyServedPacks(merged.servedByProxy());
+        for (String stale : merged.stale()) {
+            // Worth a line every time it happens rather than once: it means players have been getting
+            // the wrong pack, and it stops on its own as soon as one of them downloads the new one.
+            System.out.printf(
+                    "Cached resource pack %s no longer matches what backend %s serves under that version. "
+                            + "Letting the backend serve it so this client gets the current one; the proxy "
+                            + "re-caches it as it goes past. Until now every player was sent the cached copy, "
+                            + "whose textures no longer match the backend's items.%n",
+                    stale, backendName);
+        }
+        // Deliberately silent otherwise. The merge runs on every join and always did the same thing,
+        // so the line said nothing an operator could act on. The pack problem that *is* worth
+        // reporting — a backend serving packs the proxy does not have — still warns, from
+        // checkBackendPacks.
         // Forward merged info to client; client responses flow back through ClientRelayPacketHandler.
         // Proxy pack chunks are served locally there; backend pack chunks are forwarded to backend.
-        connection.client().sendPacket(merged);
+        connection.client().sendPacket(merged.packet());
     }
 
     private void handleMergedResourcePackStack(ResourcePackStackPacket backendStack) {

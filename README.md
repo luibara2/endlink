@@ -97,7 +97,7 @@ The settings worth knowing before a first run:
 | `backend.protocol` | Leave `auto` — it reads the version from the backend rather than trusting a pinned value |
 | `publicAddress` | Only for networks with a Java backend: the address players are sent back to when a move needs a reconnect. Empty uses the address each player connected with, which is usually right |
 | `resourcePacks.dir` | Packs every client gets at login, as `.mcpack` files or unpacked folders |
-| `resourcePacks.cacheBackendPacks` | Learns each backend's packs into `cache/packs` and serves them itself, so packs work after a switch without copying them into the directory above. The first player to switch to an unlearned backend waits for one download |
+| `resourcePacks.cacheBackendPacks` | Learns each backend's packs into `cache/packs` and serves them itself, so packs work after a switch without copying them into the directory above. The first player to switch to an unlearned backend waits for one download. A pack edited on a backend is noticed and re-learned even when its `manifest.json` version does not change |
 | `crossBackendPalette` | Leave on if any backend has custom items or entities — it is what keeps them rendering after a switch. The proxy learns each backend's registry on the first visit and caches it in `cache/backend-palettes.nbt`; after an addon change, the first player there sees the old registry until they rejoin |
 
 ## Backends

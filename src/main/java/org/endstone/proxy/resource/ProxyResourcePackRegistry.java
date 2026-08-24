@@ -36,6 +36,18 @@ public final class ProxyResourcePackRegistry {
      */
     private volatile List<ProxyResourcePackEntry> packs;
     private volatile Map<UUID, ProxyResourcePackEntry> packsByUuid;
+    /**
+     * Packs an operator put in {@code resourcePacks.dir} by hand. A backend's copy never replaces one
+     * of these, however much the bytes differ: the whole point of putting a pack there is to override
+     * what the backend serves, and {@link #learn} would otherwise undo that on the first join.
+     */
+    private volatile Set<UUID> operatorProvided = Set.of();
+    /**
+     * Stale copies already named, so a pack that cannot be relearned says so once instead of on every
+     * join. Nothing depends on this but the log line: the merge itself falls back to letting the
+     * backend serve the pack, which is what a direct connection does anyway.
+     */
+    private final Set<String> reportedStale = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private ProxyResourcePackRegistry(List<ProxyResourcePackEntry> packs) {
         install(packs);
@@ -75,14 +87,74 @@ public final class ProxyResourcePackRegistry {
         if (existing != null && compareVersions(existing.version(), entry.version()) >= 0) {
             return false;
         }
+        installReplacing(entry);
+        return true;
+    }
+
+    /**
+     * Replaces {@code entry}'s uuid where it already sits, or appends it when it is new.
+     *
+     * <p>Position matters: the order of this list becomes the order of the pack stack the client is
+     * given, and the pack stack is what decides which pack's copy of a shared file wins. A pack that
+     * jumped to the end when it was relearned would silently change every later join's texture
+     * precedence.</p>
+     */
+    private void installReplacing(ProxyResourcePackEntry entry) {
         List<ProxyResourcePackEntry> updated = new ArrayList<>(packs.size() + 1);
+        boolean replaced = false;
         for (ProxyResourcePackEntry pack : packs) {
-            if (!pack.uuid().equals(entry.uuid())) {
+            if (pack.uuid().equals(entry.uuid())) {
+                updated.add(entry);
+                replaced = true;
+            } else {
                 updated.add(pack);
             }
         }
-        updated.add(entry);
+        if (!replaced) {
+            updated.add(entry);
+        }
         install(updated);
+    }
+
+    /**
+     * Takes a pack the proxy has just seen a backend serve, replacing a copy that is out of date.
+     *
+     * <p>{@link #add} compares versions alone, which is right while loading from disk but wrong for
+     * anything learned at runtime: a pack edited in place keeps its {@code manifest.json} version, so
+     * a version comparison says the cached copy is still current and the proxy goes on serving the
+     * old bytes to every player, for ever. What a client then downloads from the proxy is not what
+     * the backend has, and the difference shows up as items with no texture at all - the pack still
+     * lists them, the files behind them are the previous edit's. Comparing the bytes is what makes
+     * that self-correcting.</p>
+     *
+     * @return true when the registry changed
+     */
+    public synchronized boolean learn(ProxyResourcePackEntry entry) {
+        if (this == EMPTY || entry == null) {
+            return false;
+        }
+        ProxyResourcePackEntry existing = packsByUuid.get(entry.uuid());
+        if (existing == null) {
+            return add(entry);
+        }
+        int comparison = compareVersions(existing.version(), entry.version());
+        if (comparison > 0) {
+            return false;
+        }
+        if (comparison == 0) {
+            if (Arrays.equals(existing.hash(), entry.hash())) {
+                return false;
+            }
+            if (operatorProvided.contains(entry.uuid())) {
+                System.out.printf(
+                        "Backend copy of resource pack %s v%s differs from the one in the packs directory "
+                                + "(%d bytes there, %d on the backend); keeping yours. Delete it from "
+                                + "resourcePacks.dir if the backend's copy is the one players should get.%n",
+                        entry.uuid(), entry.versionString(), existing.data().length, entry.data().length);
+                return false;
+            }
+        }
+        installReplacing(entry);
         return true;
     }
 
@@ -104,9 +176,13 @@ public final class ProxyResourcePackRegistry {
      */
     public static ProxyResourcePackRegistry load(Path dir, Path cacheDir) {
         ProxyResourcePackRegistry registry = mutableEmpty();
+        Set<UUID> pinned = new LinkedHashSet<>();
         for (ProxyResourcePackEntry entry : loadEntries(dir, "")) {
-            registry.add(entry);
+            if (registry.add(entry)) {
+                pinned.add(entry.uuid());
+            }
         }
+        registry.operatorProvided = Set.copyOf(pinned);
         for (ProxyResourcePackEntry entry : loadEntries(cacheDir, ", cached from a backend")) {
             registry.add(entry);
         }
@@ -404,65 +480,148 @@ public final class ProxyResourcePackRegistry {
     }
 
     /**
-     * Build a merged ResourcePacksInfoPacket with proxy packs prepended to backend packs.
-     * UUID conflicts are resolved by version: the newer version wins.
+     * What {@link #buildMergedInfo} decided: the packet to send, and which packs the proxy will
+     * answer chunk requests for.
+     *
+     * <p>The set matters because the two halves of the handshake have to agree. Telling a client that
+     * a pack comes from the backend and then serving it from the proxy anyway would hand it exactly
+     * the bytes the merge just decided were wrong.</p>
+     *
+     * @param stale packs the proxy holds under the backend's version but at a different size, named
+     *              for reporting; the backend serves those and the proxy re-learns them
      */
-    public ResourcePacksInfoPacket buildMergedInfo(ResourcePacksInfoPacket backendInfo) {
+    public record MergedPacksInfo(
+            ResourcePacksInfoPacket packet,
+            Set<UUID> servedByProxy,
+            List<String> stale
+    ) {
+    }
+
+    /**
+     * Builds the pack list to send a client: the backend's own list, in the backend's order, with the
+     * proxy's copy substituted wherever the proxy can serve it, and the packs only other backends use
+     * appended after.
+     *
+     * <p>Two things here are deliberate and were not before.</p>
+     *
+     * <p><b>The backend's order is kept.</b> A pack stack is a precedence order - where two packs
+     * carry the same file, one of them wins - so reordering it changes which textures a player sees.
+     * Emitting the proxy's packs first, in whatever order the cache directory happened to list them,
+     * gave a proxied join a different precedence order from a direct one for no reason. Packs the
+     * backend does not list cannot displace anything if they go last.</p>
+     *
+     * <p><b>A cached copy that no longer matches the backend's is not served.</b> The backend
+     * advertises each pack's size; if the proxy's copy of the same version is a different size it is a
+     * previous edit of that pack, and serving it means the client gets a manifest listing content the
+     * files behind it no longer contain. The backend's entry is forwarded instead, so the client
+     * downloads the current bytes and {@code captureBackendPackBytes} re-caches them for everyone
+     * else.</p>
+     */
+    public MergedPacksInfo buildMergedInfo(ResourcePacksInfoPacket backendInfo) {
         ResourcePacksInfoPacket merged = new ResourcePacksInfoPacket();
         merged.setForcedToAccept(backendInfo.isForcedToAccept());
         merged.setScriptingEnabled(backendInfo.isScriptingEnabled());
         merged.setForcingServerPacksEnabled(backendInfo.isForcingServerPacksEnabled());
         merged.setHasAddonPacks(backendInfo.isHasAddonPacks());
+        // Carried over rather than defaulted: a backend turning vibrant visuals off is a decision
+        // about how its packs are meant to be rendered, and dropping it renders them another way.
+        merged.setVibrantVisualsForceDisabled(backendInfo.isVibrantVisualsForceDisabled());
         merged.setWorldTemplateId(backendInfo.getWorldTemplateId() != null
                 ? backendInfo.getWorldTemplateId() : new UUID(0, 0));
         merged.setWorldTemplateVersion(backendInfo.getWorldTemplateVersion() != null
                 ? backendInfo.getWorldTemplateVersion() : "");
 
-        // Index backend resource packs by UUID
-        Map<UUID, ResourcePacksInfoPacket.Entry> backendByUuid = new LinkedHashMap<>();
-        for (ResourcePacksInfoPacket.Entry e : backendInfo.getResourcePackInfos()) {
-            backendByUuid.put(e.getPackId(), e);
-        }
+        Set<UUID> servedByProxy = new LinkedHashSet<>();
+        List<String> stale = new ArrayList<>();
+        Set<UUID> listedByBackend = new HashSet<>();
 
-        // Process proxy packs: add them (winning UUID conflicts by version)
-        Set<UUID> addedFromProxy = new HashSet<>();
-        for (ProxyResourcePackEntry proxyPack : packs) {
-            ResourcePacksInfoPacket.Entry conflict = backendByUuid.get(proxyPack.uuid());
-            if (conflict != null) {
-                int[] backendVer = parseVersion(conflict.getPackVersion());
-                if (compareVersions(proxyPack.version(), backendVer) >= 0) {
-                    // Proxy version wins (or tie): use proxy pack.
-                    //
-                    // Silent. This is per pack, per join, and the ordinary case is a tie — five
-                    // identical lines every time anyone connects. The genuinely interesting variant,
-                    // where the two versions actually differ, is not worth reinstating here either:
-                    // it would still repeat on every join. If that needs reporting, do it once when
-                    // the registry loads, comparing against the backend's advertised set.
-                    merged.getResourcePackInfos().add(proxyPack.toInfoEntry());
-                    backendByUuid.remove(proxyPack.uuid());
+        for (ResourcePacksInfoPacket.Entry backendEntry : backendInfo.getResourcePackInfos()) {
+            UUID packId = backendEntry.getPackId();
+            if (packId != null) {
+                listedByBackend.add(packId);
+            }
+            ProxyResourcePackEntry proxyPack = packId == null ? null : packsByUuid.get(packId);
+            if (proxyPack == null) {
+                merged.getResourcePackInfos().add(backendEntry);
+                continue;
+            }
+            int comparison = compareVersions(proxyPack.version(), parseVersion(backendEntry.getPackVersion()));
+            if (comparison < 0) {
+                // The backend has the newer one; it serves it, and the proxy learns it on the way past.
+                merged.getResourcePackInfos().add(backendEntry);
+                continue;
+            }
+            if (comparison == 0) {
+                if (backendEntry.getContentKey() != null && !backendEntry.getContentKey().isEmpty()) {
+                    // Encrypted: the bytes are useless without the key, and only the backend sends it.
+                    merged.getResourcePackInfos().add(backendEntry);
+                    continue;
                 }
-                // else: backend version wins; backend entry stays in backendByUuid
-            } else {
+                long advertised = backendEntry.getPackSize();
+                if (advertised > 0 && advertised != proxyPack.data().length) {
+                    String description = proxyPack.name() + " v" + proxyPack.versionString()
+                            + " (" + proxyPack.data().length + " bytes cached, "
+                            + advertised + " on the backend)";
+                    if (reportedStale.add(description)) {
+                        stale.add(description);
+                    }
+                    merged.getResourcePackInfos().add(backendEntry);
+                    continue;
+                }
+            }
+            merged.getResourcePackInfos().add(asProxyServed(proxyPack, backendEntry));
+            servedByProxy.add(packId);
+        }
+
+        // Packs this backend does not use, learned from the others. They go last so they cannot take
+        // precedence over anything the backend actually asked for.
+        for (ProxyResourcePackEntry proxyPack : packs) {
+            if (!listedByBackend.contains(proxyPack.uuid())) {
                 merged.getResourcePackInfos().add(proxyPack.toInfoEntry());
-            }
-            addedFromProxy.add(proxyPack.uuid());
-        }
-
-        // Add remaining backend resource packs (those not displaced by proxy)
-        for (ResourcePacksInfoPacket.Entry e : backendInfo.getResourcePackInfos()) {
-            if (backendByUuid.containsKey(e.getPackId())) {
-                merged.getResourcePackInfos().add(e);
+                servedByProxy.add(proxyPack.uuid());
             }
         }
 
-        // Behavior packs: pass through unchanged
+        // Behavior packs: pass through unchanged.
         merged.getBehaviorPackInfos().addAll(backendInfo.getBehaviorPackInfos());
-        return merged;
+        return new MergedPacksInfo(merged, Set.copyOf(servedByProxy), List.copyOf(stale));
     }
 
     /**
-     * Build a merged ResourcePackStackPacket injecting proxy packs.
-     * UUID conflicts resolved by version (newer wins).
+     * The proxy's copy of a pack, described the way the backend described it.
+     *
+     * <p>Everything but the size and the download source is the backend's own metadata. These fields
+     * change how the client treats a pack - whether it expects a sub-pack, whether it belongs to an
+     * addon, whether scripts run - and inventing values for them is how a pack that works on a direct
+     * connection stops working through the proxy.</p>
+     */
+    private static ResourcePacksInfoPacket.Entry asProxyServed(
+            ProxyResourcePackEntry proxyPack,
+            ResourcePacksInfoPacket.Entry backendEntry
+    ) {
+        return new ResourcePacksInfoPacket.Entry(
+                proxyPack.uuid(),
+                proxyPack.versionString(),
+                (long) proxyPack.data().length,
+                backendEntry.getContentKey() == null ? "" : backendEntry.getContentKey(),
+                backendEntry.getSubPackName() == null ? "" : backendEntry.getSubPackName(),
+                backendEntry.getContentId() == null ? "" : backendEntry.getContentId(),
+                backendEntry.isScripting(),
+                backendEntry.isRaytracingCapable(),
+                backendEntry.isAddonPack(),
+                // Emptied on purpose: a CDN url tells the client to fetch the pack from somewhere else,
+                // and the copy being described is the one this proxy is about to send over the wire.
+                ""
+        );
+    }
+
+    /**
+     * Builds the pack stack to send a client: the backend's stack, in its order, plus stack entries
+     * for the packs only other backends use.
+     *
+     * <p>The stack is the precedence order the client applies, so it is the backend's to decide. All
+     * the proxy contributes is the extra packs, appended, and a version correction where its own copy
+     * of a pack is the newer one.</p>
      */
     public ResourcePackStackPacket buildMergedStack(ResourcePackStackPacket backendStack) {
         ResourcePackStackPacket merged = new ResourcePackStackPacket();
@@ -471,42 +630,45 @@ public final class ProxyResourcePackRegistry {
         merged.setExperimentsPreviouslyToggled(backendStack.isExperimentsPreviouslyToggled());
         merged.getExperiments().addAll(backendStack.getExperiments());
 
-        // Index backend resource stack by UUID string (lowercase)
-        Map<String, ResourcePackStackPacket.Entry> backendStackByUuid = new LinkedHashMap<>();
-        for (ResourcePackStackPacket.Entry e : backendStack.getResourcePacks()) {
-            backendStackByUuid.put(e.getPackId().toLowerCase(Locale.ROOT), e);
+        Set<UUID> listedByBackend = new HashSet<>();
+        for (ResourcePackStackPacket.Entry backendEntry : backendStack.getResourcePacks()) {
+            UUID packId = parseUuid(backendEntry.getPackId());
+            if (packId != null) {
+                listedByBackend.add(packId);
+            }
+            ProxyResourcePackEntry proxyPack = packId == null ? null : packsByUuid.get(packId);
+            if (proxyPack != null
+                    && compareVersions(proxyPack.version(), parseVersion(backendEntry.getPackVersion())) > 0) {
+                merged.getResourcePacks().add(new ResourcePackStackPacket.Entry(
+                        backendEntry.getPackId(), proxyPack.versionString(), backendEntry.getSubPackName()
+                ));
+            } else {
+                merged.getResourcePacks().add(backendEntry);
+            }
         }
 
-        // Add proxy packs to stack (resolving UUID conflicts)
         for (ProxyResourcePackEntry proxyPack : packs) {
-            String uuidKey = proxyPack.uuid().toString().toLowerCase(Locale.ROOT);
-            ResourcePackStackPacket.Entry conflict = backendStackByUuid.get(uuidKey);
-            if (conflict != null) {
-                int[] backendVer = parseVersion(conflict.getPackVersion());
-                if (compareVersions(proxyPack.version(), backendVer) >= 0) {
-                    // Proxy version wins: replace backend entry
-                    merged.getResourcePacks().add(new ResourcePackStackPacket.Entry(
-                            proxyPack.uuid().toString(), proxyPack.versionString(), ""
-                    ));
-                    backendStackByUuid.remove(uuidKey);
-                }
-                // else: backend version wins; backend entry stays
-            } else {
+            if (!listedByBackend.contains(proxyPack.uuid())) {
                 merged.getResourcePacks().add(new ResourcePackStackPacket.Entry(
                         proxyPack.uuid().toString(), proxyPack.versionString(), ""
                 ));
             }
         }
 
-        // Add remaining backend stack entries
-        for (ResourcePackStackPacket.Entry e : backendStack.getResourcePacks()) {
-            if (backendStackByUuid.containsKey(e.getPackId().toLowerCase(Locale.ROOT))) {
-                merged.getResourcePacks().add(e);
-            }
-        }
-
         merged.getBehaviorPacks().addAll(backendStack.getBehaviorPacks());
         return merged;
+    }
+
+    private static UUID parseUuid(String packId) {
+        if (packId == null || packId.isEmpty()) {
+            return null;
+        }
+        int underscore = packId.indexOf('_');
+        try {
+            return UUID.fromString(underscore >= 0 ? packId.substring(0, underscore) : packId);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 
     /** Send ResourcePackDataInfoPacket to client for a proxy pack. */

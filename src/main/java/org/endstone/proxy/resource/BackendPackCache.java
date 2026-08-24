@@ -61,6 +61,41 @@ public final class BackendPackCache {
     }
 
     /**
+     * True when the copy the proxy holds is the one the backend is serving right now.
+     *
+     * <p>{@link #has} answers a weaker question and is why a pack could go stale for ever. A pack
+     * edited in place keeps its {@code manifest.json} version, so a version comparison says the
+     * cached copy is current, the proxy never looks at the bytes again, and every player is served
+     * the previous edit - a manifest that lists items whose textures are no longer in the file, which
+     * the client draws as nothing at all. The backend tells us the size, and the download tells us the
+     * hash; either disagreeing with what is cached means the copy is out of date.</p>
+     *
+     * @param advertisedSize the size the backend advertised, or 0 when it did not say
+     * @param advertisedHash the hash the backend advertised, or null when it did not say
+     */
+    public boolean hasCurrent(UUID packId, int[] version, long advertisedSize, byte[] advertisedHash) {
+        if (registry == null || packId == null) {
+            return false;
+        }
+        ProxyResourcePackEntry existing = registry.findByUuid(packId);
+        if (existing == null) {
+            return false;
+        }
+        int comparison = ProxyResourcePackRegistry.compareVersions(existing.version(), version);
+        if (comparison < 0) {
+            return false;
+        }
+        if (comparison > 0) {
+            // The proxy has a newer version than the backend advertises; nothing to relearn.
+            return true;
+        }
+        if (advertisedHash != null && advertisedHash.length > 0) {
+            return java.util.Arrays.equals(advertisedHash, existing.hash());
+        }
+        return advertisedSize <= 0 || advertisedSize == existing.data().length;
+    }
+
+    /**
      * Verifies, stores and starts serving a pack downloaded from a backend.
      *
      * @param expectedHash the hash the backend advertised, or null if it advertised none
@@ -91,14 +126,26 @@ public final class BackendPackCache {
                     packId, entry.versionString());
             return false;
         }
-        if (!registry.add(entry)) {
+        ProxyResourcePackEntry previous = registry.findByUuid(packId);
+        if (!registry.learn(entry)) {
             return false;
         }
         write(entry);
-        System.out.printf(
-                "Cached resource pack %s v%s (uuid=%s, %d bytes) from a backend; every client that logs in "
-                        + "from now on gets it.%n",
-                entry.name(), entry.versionString(), entry.uuid(), entry.data().length);
+        boolean replacedSameVersion = previous != null
+                && ProxyResourcePackRegistry.compareVersions(previous.version(), entry.version()) == 0;
+        if (replacedSameVersion) {
+            System.out.printf(
+                    "Replaced the cached copy of resource pack %s v%s (uuid=%s): it was %d bytes, the backend "
+                            + "now serves %d. The old copy was being sent to every player in place of the "
+                            + "backend's, which is what makes items lose their textures.%n",
+                    entry.name(), entry.versionString(), entry.uuid(),
+                    previous.data().length, entry.data().length);
+        } else {
+            System.out.printf(
+                    "Cached resource pack %s v%s (uuid=%s, %d bytes) from a backend; every client that logs in "
+                            + "from now on gets it.%n",
+                    entry.name(), entry.versionString(), entry.uuid(), entry.data().length);
+        }
         return true;
     }
 
