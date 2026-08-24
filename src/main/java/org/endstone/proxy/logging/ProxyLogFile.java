@@ -6,7 +6,9 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 
 public final class ProxyLogFile {
     private ProxyLogFile() {
@@ -25,41 +27,23 @@ public final class ProxyLogFile {
         );
         PrintStream originalOut = System.out;
         PrintStream originalErr = System.err;
-        PrintStream teeOut = new PrintStream(new TeeOutputStream(originalOut, file), true);
-        PrintStream teeErr = new PrintStream(new TeeOutputStream(originalErr, file), true);
-        System.setOut(teeOut);
-        System.setErr(teeErr);
+
+        // One sink for both streams: they share a file, so they have to share the lock and the
+        // are-we-at-a-line-start state. See TimestampedLogSink.
+        Clock clock = Clock.systemDefaultZone();
+        TimestampedLogSink sink = new TimestampedLogSink(file, clock);
+        System.setOut(new PrintStream(sink.streamFor(originalOut), true));
+        System.setErr(new PrintStream(sink.streamFor(originalErr), true));
 
         System.out.printf("Writing proxy log to %s.%n", logPath.toAbsolutePath().normalize());
-        System.out.printf("Log started at %s.%n", Instant.now());
+        // The absolute instant stays, because it is the one value that is unambiguous no matter where
+        // the log is read. The per-line stamps are local time and carry no zone, so name it here once.
+        ZoneId zone = clock.getZone();
+        System.out.printf(
+                "Log started at %s. Lines below are stamped [HH:mm:ss.SSS] in %s.%n",
+                Instant.now(),
+                zone
+        );
         return logPath;
-    }
-
-    private static final class TeeOutputStream extends OutputStream {
-        private final OutputStream console;
-        private final OutputStream file;
-
-        private TeeOutputStream(OutputStream console, OutputStream file) {
-            this.console = console;
-            this.file = file;
-        }
-
-        @Override
-        public synchronized void write(int b) throws IOException {
-            console.write(b);
-            file.write(b);
-        }
-
-        @Override
-        public synchronized void write(byte[] b, int off, int len) throws IOException {
-            console.write(b, off, len);
-            file.write(b, off, len);
-        }
-
-        @Override
-        public synchronized void flush() throws IOException {
-            console.flush();
-            file.flush();
-        }
     }
 }
