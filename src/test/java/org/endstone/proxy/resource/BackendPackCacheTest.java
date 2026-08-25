@@ -15,6 +15,7 @@ import java.util.zip.ZipOutputStream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -161,17 +162,31 @@ final class BackendPackCacheTest {
         BackendPackCache cache = BackendPackCache.of(dir, registry);
         byte[] cached = pack(PACK_UUID, "Skygen", "[4, 0, 0]");
         cache.store(PACK_UUID, cached, sha256(cached));
+        ProxyResourcePackEntry cachedEntry = registry.findByUuid(PACK_UUID);
         int[] sameVersion = {4, 0, 0};
 
-        assertTrue(cache.hasCurrent(PACK_UUID, sameVersion, cached.length, sha256(cached)));
+        assertNotEquals(cached.length, cachedEntry.contentSize(),
+                "the protocol's content size and the downloaded archive size are different fields");
+        assertTrue(cache.hasCurrentContent(PACK_UUID, sameVersion, cachedEntry.contentSize(), sha256(cached)));
         // Either the size or the hash disagreeing is enough to know the copy is out of date.
-        assertFalse(cache.hasCurrent(PACK_UUID, sameVersion, cached.length + 1, null));
-        assertFalse(cache.hasCurrent(PACK_UUID, sameVersion, 0,
+        assertFalse(cache.hasCurrentContent(PACK_UUID, sameVersion, cachedEntry.contentSize() + 1, null));
+        assertFalse(cache.hasCurrentContent(PACK_UUID, sameVersion, 0,
                 sha256("a different edit".getBytes(StandardCharsets.UTF_8))));
         // A backend that says nothing about either leaves the cached copy alone, as before.
-        assertTrue(cache.hasCurrent(PACK_UUID, sameVersion, 0, null));
+        assertTrue(cache.hasCurrentContent(PACK_UUID, sameVersion, 0, null));
         // And an older backend copy still does not displace a newer cached one.
-        assertTrue(cache.hasCurrent(PACK_UUID, new int[]{3, 0, 0}, 999_999, null));
+        assertTrue(cache.hasCurrentContent(PACK_UUID, new int[]{3, 0, 0}, 999_999, null));
+    }
+
+    @Test
+    void compressedDataInfoSizeIsCheckedAgainstTheArchiveRatherThanContent(@TempDir Path dir) throws Exception {
+        ProxyResourcePackRegistry registry = ProxyResourcePackRegistry.mutableEmpty();
+        BackendPackCache cache = BackendPackCache.of(dir, registry);
+        byte[] cached = paddedPack(PACK_UUID, "Skygen", "[4, 0, 0]", 32 * 1024);
+        cache.store(PACK_UUID, cached, sha256(cached));
+
+        assertTrue(cache.hasCurrentCompressed(PACK_UUID, new int[]{4, 0, 0}, cached.length, null));
+        assertFalse(cache.hasCurrentCompressed(PACK_UUID, new int[]{4, 0, 0}, cached.length + 1, null));
     }
 
     @Test

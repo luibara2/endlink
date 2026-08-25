@@ -71,6 +71,7 @@ public final class ProxyConnection {
     private long nextSyntheticClientRuntimeEntityId = 1_000_000_000L;
     private final Map<Long, Long> backendToClientRuntimeIds = new HashMap<>();
     private final Map<Long, Long> clientToBackendRuntimeIds = new HashMap<>();
+    private final Map<Long, Long> backendRuntimeIdsByUniqueId = new HashMap<>();
     private final Map<Long, byte[]> syntheticClientChunkBlobs = new HashMap<>();
     private final List<BedrockPacket> deferredSwitchPlayerState = new ArrayList<>();
     private final List<BedrockPacket> deferredSwitchWorldState = new ArrayList<>();
@@ -533,6 +534,7 @@ public final class ProxyConnection {
         }
         backendToClientRuntimeIds.clear();
         clientToBackendRuntimeIds.clear();
+        backendRuntimeIdsByUniqueId.clear();
         registerRuntimeMapping(backendPlayerRuntimeEntityId, clientPlayerRuntimeEntityId);
     }
 
@@ -622,6 +624,40 @@ public final class ProxyConnection {
         clientToBackendRuntimeIds.put(clientRuntimeEntityId, backendRuntimeEntityId);
     }
 
+    /** Registers a spawned entity and returns the runtime id the client should see. */
+    synchronized long registerEntityRuntimeMapping(long uniqueEntityId, long backendRuntimeEntityId) {
+        long clientRuntimeEntityId = toClientRuntimeEntityId(backendRuntimeEntityId, true);
+        if (uniqueEntityId != 0 && backendRuntimeEntityId > 0) {
+            Long previousRuntimeEntityId = backendRuntimeIdsByUniqueId.put(uniqueEntityId, backendRuntimeEntityId);
+            if (previousRuntimeEntityId != null && previousRuntimeEntityId != backendRuntimeEntityId) {
+                removeRuntimeMapping(previousRuntimeEntityId);
+            }
+        }
+        return clientRuntimeEntityId;
+    }
+
+    /**
+     * Releases both directions of an entity-id mapping when the backend despawns it. Without this,
+     * a busy world leaves every entity ever seen in two per-player maps until the next server switch.
+     */
+    synchronized void removeEntityRuntimeMapping(long uniqueEntityId) {
+        Long backendRuntimeEntityId = backendRuntimeIdsByUniqueId.remove(uniqueEntityId);
+        if (backendRuntimeEntityId != null && backendRuntimeEntityId != backendPlayerRuntimeEntityId) {
+            removeRuntimeMapping(backendRuntimeEntityId);
+        }
+    }
+
+    private void removeRuntimeMapping(long backendRuntimeEntityId) {
+        Long clientRuntimeEntityId = backendToClientRuntimeIds.remove(backendRuntimeEntityId);
+        if (clientRuntimeEntityId != null) {
+            clientToBackendRuntimeIds.remove(clientRuntimeEntityId);
+        }
+    }
+
+    synchronized int trackedRuntimeEntityMappingCount() {
+        return backendRuntimeIdsByUniqueId.size();
+    }
+
     public synchronized void setPlayerDimensionId(int playerDimensionId) {
         this.playerDimensionId = playerDimensionId;
     }
@@ -671,18 +707,21 @@ public final class ProxyConnection {
     }
 
     /**
-     * Records a client-ready (already translated) packet that carries persistent world state —
-     * chunks, entity spawns/removals, block updates and the publisher updates that scope them.
+     * Records a client-ready (already translated) packet that carries persistent world/HUD state —
+     * chunks, entity spawns/removals, block updates, publisher updates, boss bars, scoreboards and
+     * locator waypoints.
      *
      * <p>The backend streams a chunk exactly once per player: BDS marks it sent in that player's chunk
      * view and only ever re-sends it if the chunk leaves and re-enters the view radius. During a
      * backend switch the {@link BackendSwitchReset} suppresses world state so it cannot land in the
      * fake dimension the client is bounced through — but a backend whose spawn chunks are already
      * resident and cheap to serialize (a skyblock/void world, say) can stream the player's entire
-     * surroundings inside that window. Entity visibility has the same edge-triggered behavior: an
+     * surroundings inside that window. Entity and HUD visibility have the same edge-triggered behavior: an
      * AddEntity/AddPlayer packet suppressed while the entity is already in view is not sent again until
-     * the player leaves and re-enters that view. Dropping either kind is therefore permanent in place,
-     * so buffer instead and replay once the client is back in the target dimension.</p>
+     * the player leaves and re-enters that view. A boss-bar CREATE, scoreboard objective or locator
+     * waypoint sent during the fake dimension transition may likewise never be repeated. Dropping any
+     * of them is therefore permanent in place, so buffer instead and replay once the client is back in
+     * the target dimension.</p>
      *
      * <p>Bounded by {@link #MAX_DEFERRED_SWITCH_WORLD_STATE} so a backend that streams for the whole
      * ack-fallback window cannot grow this without limit; past the cap we fall back to dropping.</p>

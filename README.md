@@ -95,6 +95,7 @@ The settings worth knowing before a first run:
 | `backendVerification.sharedSecret` | Must match EndlinkGuard's `shared_secret` on every backend |
 | `permissions.admins` | XUIDs allowed to run `/send`, `/alert`, `/glist`, `/perm` |
 | `backend.protocol` | Leave `auto` — it reads the version from the backend rather than trusting a pinned value |
+| `network.udp.*BufferBytes` | Kernel buffers for the shared listener and backend sockets. Endlink warns when the OS caps them; on Linux, raise `net.core.rmem_max` / `net.core.wmem_max` above the configured values to avoid RakNet retransmission stalls under bursts |
 | `publicAddress` | Only for networks with a Java backend: the address players are sent back to when a move needs a reconnect. Empty uses the address each player connected with, which is usually right |
 | `resourcePacks.dir` | Packs every client gets at login, as `.mcpack` files or unpacked folders |
 | `resourcePacks.cacheBackendPacks` | Learns each backend's packs into `cache/packs` and serves them itself, so packs work after a switch without copying them into the directory above. The first player to switch to an unlearned backend waits for one download. A pack edited on a backend is noticed and re-learned even when its `manifest.json` version does not change |

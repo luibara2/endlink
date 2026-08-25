@@ -21,6 +21,7 @@ import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
 import org.cloudburstmc.protocol.bedrock.packet.AvailableCommandsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BiomeDefinitionListPacket;
+import org.cloudburstmc.protocol.bedrock.packet.BossEventPacket;
 import org.cloudburstmc.protocol.bedrock.packet.CameraPresetsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ChangeDimensionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ChunkRadiusUpdatedPacket;
@@ -42,6 +43,7 @@ import org.endstone.proxy.palette.CrossBackendPalette;
 import org.endstone.proxy.palette.ItemPaletteMapping;
 import org.cloudburstmc.protocol.bedrock.packet.LevelChunkPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LevelSoundEventPacket;
+import org.cloudburstmc.protocol.bedrock.packet.LocatorBarPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MoveEntityAbsolutePacket;
 import org.cloudburstmc.protocol.bedrock.packet.MoveEntityDeltaPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket;
@@ -49,6 +51,7 @@ import org.cloudburstmc.protocol.bedrock.packet.MovementEffectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MovementPredictionSyncPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkChunkPublisherUpdatePacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
+import org.cloudburstmc.protocol.bedrock.packet.PlayerLocationPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerListPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackChunkDataPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackClientResponsePacket;
@@ -56,9 +59,11 @@ import org.cloudburstmc.protocol.bedrock.packet.ResourcePackDataInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackStackPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RemoveEntityPacket;
+import org.cloudburstmc.protocol.bedrock.packet.RemoveObjectivePacket;
 import org.cloudburstmc.protocol.bedrock.packet.RespawnPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RequestChunkRadiusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetCommandsEnabledPacket;
+import org.cloudburstmc.protocol.bedrock.packet.SetDisplayObjectivePacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetEntityDataPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetEntityLinkPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetEntityMotionPacket;
@@ -70,6 +75,8 @@ import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.response.ItemS
 import org.cloudburstmc.protocol.bedrock.packet.ItemStackResponsePacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetPlayerInventoryOptionsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetPlayerGameTypePacket;
+import org.cloudburstmc.protocol.bedrock.packet.SetScorePacket;
+import org.cloudburstmc.protocol.bedrock.packet.SetScoreboardIdentityPacket;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.cloudburstmc.protocol.bedrock.packet.SubChunkRequestPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SubChunkPacket;
@@ -1317,9 +1324,7 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
         if (packet instanceof DisconnectPacket || packet instanceof PlayStatusPacket) {
             return false;
         }
-        if (packet instanceof RespawnPacket
-                || packet instanceof LevelChunkPacket
-                || packet instanceof NetworkChunkPublisherUpdatePacket) {
+        if (packet instanceof RespawnPacket || isDeferrableWorldStatePacket(packet)) {
             return true;
         }
         return switch (packet.getClass().getSimpleName()) {
@@ -1417,13 +1422,18 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
     }
 
     /**
-     * World state the backend will not resend while it remains inside the player's view.
+     * Persistent world and HUD state the backend may not resend after the switch reset.
      *
      * <p>That includes entity spawns as well as chunks. BDS sends AddEntity/AddPlayer when an entity
      * enters the view, not on every tick. If the packet lands during the dimension bounce and is only
      * suppressed, the backend still considers the entity visible and will not announce it again until
      * the player walks far enough away and returns. Keep the matching removal too, so an entity which
      * disappears during the reset is not replayed as a ghost.</p>
+     *
+     * <p>Boss bars, scoreboards and locator waypoints are similarly edge-triggered. Their CREATE/ADD
+     * packets are commonly part of the target backend's one-time join burst; forwarding that burst
+     * during the fake dimension transition lets the Bedrock client silently discard it. Preserve the
+     * full ordered packet stream and replay it only after the client acknowledges the target world.</p>
      *
      * <p>Movement and other high-frequency updates remain suppressed. The spawn packet contains the
      * authoritative initial position and metadata, and live updates resume after the short reset;
@@ -1440,7 +1450,14 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
                 || packet instanceof AddItemEntityPacket
                 || packet instanceof AddHangingEntityPacket
                 || packet instanceof AddPlayerPacket
-                || packet instanceof RemoveEntityPacket;
+                || packet instanceof RemoveEntityPacket
+                || packet instanceof BossEventPacket
+                || packet instanceof SetDisplayObjectivePacket
+                || packet instanceof RemoveObjectivePacket
+                || packet instanceof SetScorePacket
+                || packet instanceof SetScoreboardIdentityPacket
+                || packet instanceof LocatorBarPacket
+                || packet instanceof PlayerLocationPacket;
     }
 
     private boolean isLocalPlayerStatePacket(BedrockPacket packet) {
@@ -1688,7 +1705,7 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
             // deciding it already has one on the version alone means a pack edited without a version
             // bump is never looked at again and the stale copy is served for ever.
             if (size <= 0 || size > BackendPackCache.MAX_PACK_BYTES
-                    || cache.hasCurrent(
+                    || cache.hasCurrentCompressed(
                             dataInfo.getPackId(),
                             ProxyResourcePackRegistry.parseVersion(dataInfo.getPackVersion()),
                             size,
@@ -3062,7 +3079,7 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
                 && connection.sessionProfile().backendCodec().getProtocolVersion() < MODERN_JOIN_PROTOCOL;
     }
 
-    private BedrockPacket rewriteClientboundRuntimeIds(BedrockPacket packet) {
+    BedrockPacket rewriteClientboundRuntimeIds(BedrockPacket packet) {
         if (packet instanceof StartGamePacket startGame) {
             normalizeJoinStartGamePosition(startGame);
             neutralizeCrossProtocolBlockPalette(startGame);
@@ -3102,20 +3119,28 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
         } else if (packet instanceof SetEntityLinkPacket linkPacket && linkPacket.getEntityLink() != null) {
             linkPacket.setEntityLink(rewriteLink(linkPacket.getEntityLink()));
         } else if (packet instanceof AddEntityPacket addEntity) {
-            addEntity.setRuntimeEntityId(toClientRuntime(addEntity.getRuntimeEntityId(), true));
+            addEntity.setRuntimeEntityId(connection.registerEntityRuntimeMapping(
+                    addEntity.getUniqueEntityId(), addEntity.getRuntimeEntityId()));
             addEntity.setEntityLinks(rewriteLinks(addEntity.getEntityLinks()));
         } else if (packet instanceof AddItemEntityPacket addItem) {
-            addItem.setRuntimeEntityId(toClientRuntime(addItem.getRuntimeEntityId(), true));
+            addItem.setRuntimeEntityId(connection.registerEntityRuntimeMapping(
+                    addItem.getUniqueEntityId(), addItem.getRuntimeEntityId()));
         } else if (packet instanceof AddPlayerPacket addPlayer) {
-            addPlayer.setRuntimeEntityId(toClientRuntime(addPlayer.getRuntimeEntityId(), true));
+            addPlayer.setRuntimeEntityId(connection.registerEntityRuntimeMapping(
+                    addPlayer.getUniqueEntityId(), addPlayer.getRuntimeEntityId()));
             addPlayer.setUniqueEntityId(toClientUnique(addPlayer.getUniqueEntityId()));
             addPlayer.setEntityLinks(rewriteLinks(addPlayer.getEntityLinks()));
         } else if (packet instanceof AddHangingEntityPacket addHanging) {
-            addHanging.setRuntimeEntityId(toClientRuntime(addHanging.getRuntimeEntityId(), true));
+            addHanging.setRuntimeEntityId(connection.registerEntityRuntimeMapping(
+                    addHanging.getUniqueEntityId(), addHanging.getRuntimeEntityId()));
+        } else if (packet instanceof RemoveEntityPacket removeEntity) {
+            connection.removeEntityRuntimeMapping(removeEntity.getUniqueEntityId());
         } else if (packet instanceof UpdatePlayerGameTypePacket updateGameType) {
             updateGameType.setEntityId(traceUniqueRewrite("UpdatePlayerGameType", updateGameType.getEntityId()));
         } else if (packet instanceof UpdateAbilitiesPacket abilities) {
             abilities.setUniqueEntityId(traceUniqueRewrite("UpdateAbilities", abilities.getUniqueEntityId()));
+        } else if (packet instanceof BossEventPacket bossEvent) {
+            normalizeBossEventUniqueIds(bossEvent);
         } else if (packet instanceof PlayerListPacket playerList) {
             // Entry.entityId is the player's *unique* id. The local player's own entry has to be
             // remapped like any other local-player id packet, or the client binds its skin and
@@ -3130,6 +3155,22 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
             normalizeJoinChunkRadiusUpdated(radiusUpdated);
         }
         return packet;
+    }
+
+    /**
+     * A boss event carries two unique entity ids: the boss whose bar is being changed and the
+     * player receiving the event. Endstone can use the local player's backend id for either field.
+     * That id changes on a backend switch, while the client keeps the id from its first StartGame,
+     * so an unrewritten event is silently ignored by the client.
+     *
+     * <p>Map both fields. {@link ProxyConnection#toClientUniqueEntityId(long)} changes only the
+     * current backend player's id, leaving real or synthetic boss ids untouched.</p>
+     */
+    private void normalizeBossEventUniqueIds(BossEventPacket bossEvent) {
+        bossEvent.setBossUniqueEntityId(traceUniqueRewrite(
+                "BossEvent.boss", bossEvent.getBossUniqueEntityId()));
+        bossEvent.setPlayerUniqueEntityId(traceUniqueRewrite(
+                "BossEvent.player", bossEvent.getPlayerUniqueEntityId()));
     }
 
     private Vector3f saneJoinPosition(StartGamePacket startGame) {

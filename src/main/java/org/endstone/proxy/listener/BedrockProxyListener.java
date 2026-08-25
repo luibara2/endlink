@@ -29,6 +29,7 @@ import org.endstone.proxy.config.BackendVerificationConfig;
 import org.endstone.proxy.config.ProxyConfig;
 import org.endstone.proxy.config.SecurityConfig;
 import org.endstone.proxy.network.LoggingExceptionHandler;
+import org.endstone.proxy.network.UdpSocketBuffers;
 import org.endstone.proxy.security.ConnectionThrottle;
 import org.endstone.proxy.security.PreAuthBatchLimiter;
 import org.endstone.proxy.security.RateLimitReporter;
@@ -199,6 +200,7 @@ public final class BedrockProxyListener {
                 permissions,
                 playerEnum,
                 backendPaletteStore,
+                config.udpBuffers(),
                 config.publicAddress(),
                 listen.getPort()
         );
@@ -359,7 +361,15 @@ public final class BedrockProxyListener {
     ) {
         return new ServerBootstrap()
                 .group(eventLoopGroup)
-                .channelFactory(RakChannelFactory.server(NioDatagramChannel.class))
+                .channelFactory(RakChannelFactory.server(
+                        NioDatagramChannel.class,
+                        channel -> UdpSocketBuffers.configure(
+                                channel,
+                                config.udpBuffers().listenerReceiveBytes(),
+                                config.udpBuffers().sendBytes(),
+                                "player listener"
+                        )
+                ))
                 .option(RakChannelOption.RAK_GUID, ThreadLocalRandom.current().nextLong())
                 .option(RakChannelOption.RAK_ADVERTISEMENT, advertisement(trusted).toByteBuf())
                 .option(RakChannelOption.RAK_MAX_CONNECTIONS, config.maxPlayers())

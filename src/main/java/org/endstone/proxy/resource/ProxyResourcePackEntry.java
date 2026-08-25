@@ -8,6 +8,7 @@ public record ProxyResourcePackEntry(
         UUID uuid,
         int[] version,
         String name,
+        long contentSize,
         byte[] data,
         byte[] hash
 ) {
@@ -45,7 +46,7 @@ public record ProxyResourcePackEntry(
         return new ResourcePacksInfoPacket.Entry(
                 uuid,
                 versionString(),
-                (long) data.length,
+                contentSize,
                 "",             // contentKey
                 "",             // subPackName
                 "",             // contentId

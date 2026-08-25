@@ -14,6 +14,7 @@ import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -88,12 +89,12 @@ final class ProxyResourcePackMergeTest {
         ProxyResourcePackRegistry registry = registryOf(cached);
 
         ProxyResourcePackRegistry.MergedPacksInfo merged = registry.buildMergedInfo(
-                info(backendEntry(MAIN, "4.0.0", cached.data().length + 4096)));
+                info(backendEntry(MAIN, "4.0.0", cached.contentSize() + 4096)));
 
         assertFalse(merged.servedByProxy().contains(MAIN),
                 "the proxy must not serve a copy it knows is not the backend's");
         assertEquals(1, merged.stale().size());
-        assertEquals(cached.data().length + 4096,
+        assertEquals(cached.contentSize() + 4096,
                 merged.packet().getResourcePackInfos().get(0).getPackSize(),
                 "the client is pointed at the backend's copy, described as the backend described it");
     }
@@ -102,9 +103,11 @@ final class ProxyResourcePackMergeTest {
     void aCachedCopyThatMatchesIsServedByTheProxy() throws Exception {
         ProxyResourcePackEntry cached = ProxyResourcePackRegistry.entryFrom(pack(MAIN, "Main", "[4, 0, 0]", 64));
         ProxyResourcePackRegistry registry = registryOf(cached);
+        assertNotEquals(cached.data().length, cached.contentSize(),
+                "this regression needs an archive whose wire and expanded sizes differ");
 
         ProxyResourcePackRegistry.MergedPacksInfo merged = registry.buildMergedInfo(
-                info(backendEntry(MAIN, "4.0.0", cached.data().length)));
+                info(backendEntry(MAIN, "4.0.0", cached.contentSize())));
 
         assertTrue(merged.servedByProxy().contains(MAIN));
         assertTrue(merged.stale().isEmpty());
@@ -116,7 +119,7 @@ final class ProxyResourcePackMergeTest {
         ProxyResourcePackRegistry registry = registryOf(cached);
 
         ResourcePacksInfoPacket.Entry served = registry.buildMergedInfo(
-                        info(backendEntry(MAIN, "4.0.0", cached.data().length)))
+                        info(backendEntry(MAIN, "4.0.0", cached.contentSize())))
                 .packet().getResourcePackInfos().get(0);
 
         // Every one of these changes how the client treats the pack. Inventing values for them is how
@@ -127,7 +130,7 @@ final class ProxyResourcePackMergeTest {
         assertTrue(served.isRaytracingCapable());
         // Except the two the proxy genuinely owns: it is the source, and it knows its own size.
         assertEquals("", served.getCdnUrl());
-        assertEquals(cached.data().length, served.getPackSize());
+        assertEquals(cached.contentSize(), served.getPackSize());
     }
 
     @Test
@@ -135,7 +138,7 @@ final class ProxyResourcePackMergeTest {
         ProxyResourcePackEntry cached = ProxyResourcePackRegistry.entryFrom(pack(MAIN, "Main", "[4, 0, 0]", 64));
         ProxyResourcePackRegistry registry = registryOf(cached);
         ResourcePacksInfoPacket.Entry encrypted = new ResourcePacksInfoPacket.Entry(
-                MAIN, "4.0.0", cached.data().length, "a-content-key", "", "", false, false, false, "");
+                MAIN, "4.0.0", cached.contentSize(), "a-content-key", "", "", false, false, false, "");
 
         ProxyResourcePackRegistry.MergedPacksInfo merged = registry.buildMergedInfo(info(encrypted));
 
@@ -155,8 +158,8 @@ final class ProxyResourcePackMergeTest {
         ProxyResourcePackRegistry registry = registryOf(crown, foreign, main);
 
         ProxyResourcePackRegistry.MergedPacksInfo merged = registry.buildMergedInfo(info(
-                backendEntry(MAIN, "4.0.0", main.data().length),
-                backendEntry(CROWN, "4.0.0", crown.data().length)));
+                backendEntry(MAIN, "4.0.0", main.contentSize()),
+                backendEntry(CROWN, "4.0.0", crown.contentSize())));
 
         assertEquals(List.of(MAIN, CROWN, FOREIGN), ids(merged.packet()));
         assertEquals(3, merged.servedByProxy().size());

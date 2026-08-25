@@ -38,6 +38,7 @@ public class DefaultRakSessionConfig extends DefaultChannelConfig implements Rak
     private volatile long sessionTimeout = SESSION_TIMEOUT_MS;
     private volatile boolean autoFlush = true;
     private volatile int flushInterval = 10;
+    private volatile int maxQueuedBytes = 64 * 1024 * 1024;
 
     public DefaultRakSessionConfig(Channel channel) {
         super(channel);
@@ -48,7 +49,8 @@ public class DefaultRakSessionConfig extends DefaultChannelConfig implements Rak
         return this.getOptions(
                 super.getOptions(),
                 RakChannelOption.RAK_GUID, RakChannelOption.RAK_MAX_CHANNELS, RakChannelOption.RAK_MTU, RakChannelOption.RAK_PROTOCOL_VERSION, RakChannelOption.RAK_ORDERING_CHANNELS,
-                RakChannelOption.RAK_METRICS, RakChannelOption.RAK_SESSION_TIMEOUT, RakChannelOption.RAK_AUTO_FLUSH, RakChannelOption.RAK_FLUSH_INTERVAL);
+                RakChannelOption.RAK_METRICS, RakChannelOption.RAK_SESSION_TIMEOUT, RakChannelOption.RAK_AUTO_FLUSH, RakChannelOption.RAK_FLUSH_INTERVAL,
+                RakChannelOption.RAK_MAX_QUEUED_BYTES);
     }
 
     @SuppressWarnings("unchecked")
@@ -78,6 +80,9 @@ public class DefaultRakSessionConfig extends DefaultChannelConfig implements Rak
         if (option == RakChannelOption.RAK_FLUSH_INTERVAL) {
             return (T) Integer.valueOf(this.getFlushInterval());
         }
+        if (option == RakChannelOption.RAK_MAX_QUEUED_BYTES) {
+            return (T) Integer.valueOf(this.getMaxQueuedBytes());
+        }
         return this.channel.parent().config().getOption(option);
     }
 
@@ -102,6 +107,8 @@ public class DefaultRakSessionConfig extends DefaultChannelConfig implements Rak
             this.setAutoFlush((Boolean) value);
         } else if (option == RakChannelOption.RAK_FLUSH_INTERVAL) {
             this.setFlushInterval((Integer) value);
+        } else if (option == RakChannelOption.RAK_MAX_QUEUED_BYTES) {
+            this.setMaxQueuedBytes((Integer) value);
         } else {
             return this.channel.parent().config().setOption(option, value);
         }
@@ -193,5 +200,18 @@ public class DefaultRakSessionConfig extends DefaultChannelConfig implements Rak
     @Override
     public void setFlushInterval(int flushInterval) {
         this.flushInterval = flushInterval;
+    }
+
+    @Override
+    public int getMaxQueuedBytes() {
+        return maxQueuedBytes;
+    }
+
+    @Override
+    public void setMaxQueuedBytes(int maxQueuedBytes) {
+        if (maxQueuedBytes < 0) {
+            throw new IllegalArgumentException("maxQueuedBytes cannot be negative");
+        }
+        this.maxQueuedBytes = maxQueuedBytes;
     }
 }

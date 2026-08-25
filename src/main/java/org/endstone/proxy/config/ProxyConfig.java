@@ -20,6 +20,7 @@ import java.util.stream.Collectors;
 
 public record ProxyConfig(
         InetSocketAddress listenAddress,
+        UdpBufferConfig udpBuffers,
         BackendConfig backend,
         Map<String, BackendConfig> backends,
         String hubBackendName,
@@ -47,6 +48,9 @@ public record ProxyConfig(
     public ProxyConfig {
         if (listenAddress == null) {
             throw new IllegalArgumentException("listenAddress cannot be null");
+        }
+        if (udpBuffers == null) {
+            throw new IllegalArgumentException("udpBuffers cannot be null");
         }
         if (backend == null) {
             throw new IllegalArgumentException("backend cannot be null");
@@ -200,8 +204,16 @@ public record ProxyConfig(
                 : null;
 
         FailoverConfig failover = failoverConfig(properties, backends, hubBackendName);
+        UdpBufferConfig udpBuffers = new UdpBufferConfig(
+                intProperty(properties, "network.udp.listenerReceiveBufferBytes",
+                        UdpBufferConfig.DEFAULT_LISTENER_RECEIVE_BYTES),
+                intProperty(properties, "network.udp.backendReceiveBufferBytes",
+                        UdpBufferConfig.DEFAULT_BACKEND_RECEIVE_BYTES),
+                intProperty(properties, "network.udp.sendBufferBytes", UdpBufferConfig.DEFAULT_SEND_BYTES)
+        );
         return new ProxyConfig(
                 new InetSocketAddress(listenHost, listenPort),
+                udpBuffers,
                 defaultBackend,
                 backends,
                 hubBackendName,
@@ -249,6 +261,12 @@ public record ProxyConfig(
         Properties properties = new Properties();
         properties.setProperty("listener.host", DEFAULT_LISTEN_HOST);
         properties.setProperty("listener.port", Integer.toString(DEFAULT_LISTEN_PORT));
+        properties.setProperty("network.udp.listenerReceiveBufferBytes",
+                Integer.toString(UdpBufferConfig.DEFAULT_LISTENER_RECEIVE_BYTES));
+        properties.setProperty("network.udp.backendReceiveBufferBytes",
+                Integer.toString(UdpBufferConfig.DEFAULT_BACKEND_RECEIVE_BYTES));
+        properties.setProperty("network.udp.sendBufferBytes",
+                Integer.toString(UdpBufferConfig.DEFAULT_SEND_BYTES));
         properties.setProperty("backend.name", "default");
         properties.setProperty("backend.host", DEFAULT_BACKEND_HOST);
         properties.setProperty("backend.port", Integer.toString(DEFAULT_BACKEND_PORT));

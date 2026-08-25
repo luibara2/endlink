@@ -29,6 +29,14 @@ public final class BackendPackCache {
      */
     public static final int MAX_PACK_BYTES = 96 * 1024 * 1024;
 
+    /**
+     * Largest expanded pack the proxy will inspect or cache. {@code ResourcePacksInfo.Entry#packSize}
+     * is the sum of the files inside the archive, while {@link #MAX_PACK_BYTES} limits the compressed
+     * bytes that are actually buffered from {@code ResourcePackDataInfoPacket}. Keeping both limits
+     * prevents a small zip bomb from bypassing the download cap.
+     */
+    public static final long MAX_PACK_CONTENT_BYTES = 512L * 1024 * 1024;
+
     private final Path directory;
     private final ProxyResourcePackRegistry registry;
 
@@ -70,10 +78,11 @@ public final class BackendPackCache {
      * the client draws as nothing at all. The backend tells us the size, and the download tells us the
      * hash; either disagreeing with what is cached means the copy is out of date.</p>
      *
-     * @param advertisedSize the size the backend advertised, or 0 when it did not say
+     * @param advertisedSize the expanded content size from {@code ResourcePacksInfoPacket}, or 0
+     *                       when the backend did not say
      * @param advertisedHash the hash the backend advertised, or null when it did not say
      */
-    public boolean hasCurrent(UUID packId, int[] version, long advertisedSize, byte[] advertisedHash) {
+    public boolean hasCurrentContent(UUID packId, int[] version, long advertisedSize, byte[] advertisedHash) {
         if (registry == null || packId == null) {
             return false;
         }
@@ -92,7 +101,37 @@ public final class BackendPackCache {
         if (advertisedHash != null && advertisedHash.length > 0) {
             return java.util.Arrays.equals(advertisedHash, existing.hash());
         }
-        return advertisedSize <= 0 || advertisedSize == existing.data().length;
+        return advertisedSize <= 0 || advertisedSize == existing.contentSize();
+    }
+
+    /**
+     * The equivalent check for {@code ResourcePackDataInfoPacket}, whose size is the compressed
+     * archive length rather than the expanded content size advertised by {@code ResourcePacksInfo}.
+     */
+    public boolean hasCurrentCompressed(
+            UUID packId,
+            int[] version,
+            long advertisedCompressedSize,
+            byte[] advertisedHash
+    ) {
+        if (registry == null || packId == null) {
+            return false;
+        }
+        ProxyResourcePackEntry existing = registry.findByUuid(packId);
+        if (existing == null) {
+            return false;
+        }
+        int comparison = ProxyResourcePackRegistry.compareVersions(existing.version(), version);
+        if (comparison < 0) {
+            return false;
+        }
+        if (comparison > 0) {
+            return true;
+        }
+        if (advertisedHash != null && advertisedHash.length > 0) {
+            return java.util.Arrays.equals(advertisedHash, existing.hash());
+        }
+        return advertisedCompressedSize <= 0 || advertisedCompressedSize == existing.data().length;
     }
 
     /**

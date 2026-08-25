@@ -27,6 +27,7 @@ import org.endstone.proxy.config.BackendConfig;
 import org.endstone.proxy.config.BackendSwitchConfig;
 import org.endstone.proxy.config.ForcedHostsConfig;
 import org.endstone.proxy.config.ProxyPolicy;
+import org.endstone.proxy.config.UdpBufferConfig;
 import org.endstone.proxy.auth.OfflineLoginForge;
 import org.endstone.proxy.session.ConnectedPlayerRegistry;
 import org.endstone.proxy.protocol.BedrockRelease;
@@ -34,6 +35,7 @@ import org.endstone.proxy.protocol.CanonicalProtocol;
 import org.endstone.proxy.protocol.ProtocolBinding;
 import org.endstone.proxy.protocol.ProtocolRegistry;
 import org.endstone.proxy.network.LoggingExceptionHandler;
+import org.endstone.proxy.network.UdpSocketBuffers;
 import org.endstone.proxy.session.ProxySessionProfile;
 import org.endstone.proxy.palette.BackendPaletteStore;
 import org.endstone.proxy.verification.PendingJoinRegistry;
@@ -75,6 +77,7 @@ public final class BackendConnector {
     private final ProxyPermissions permissions;
     private final ProxyPlayerEnum playerEnum;
     private final BackendPaletteStore paletteStore;
+    private final UdpBufferConfig udpBuffers;
     private final String publicAddress;
     private final int listenPort;
     private final ReconnectRoutes reconnectRoutes = new ReconnectRoutes();
@@ -101,6 +104,7 @@ public final class BackendConnector {
             ProxyPermissions permissions,
             ProxyPlayerEnum playerEnum,
             BackendPaletteStore paletteStore,
+            UdpBufferConfig udpBuffers,
             String publicAddress,
             int listenPort
     ) {
@@ -120,6 +124,7 @@ public final class BackendConnector {
                 permissions,
                 playerEnum,
                 paletteStore,
+                udpBuffers,
                 publicAddress,
                 listenPort
         );
@@ -141,10 +146,12 @@ public final class BackendConnector {
             ProxyPermissions permissions,
             ProxyPlayerEnum playerEnum,
             BackendPaletteStore paletteStore,
+            UdpBufferConfig udpBuffers,
             String publicAddress,
             int listenPort
     ) {
         this.paletteStore = paletteStore;
+        this.udpBuffers = udpBuffers == null ? UdpBufferConfig.defaults() : udpBuffers;
         this.publicAddress = publicAddress == null ? "" : publicAddress.trim();
         this.listenPort = listenPort;
         this.eventLoopGroup = eventLoopGroup;
@@ -467,7 +474,15 @@ public final class BackendConnector {
         }
 
         AtomicReference<BackendSession> createdSession = new AtomicReference<>();
-        ChannelFactory<? extends Channel> channelFactory = RakChannelFactory.client(NioDatagramChannel.class);
+        ChannelFactory<? extends Channel> channelFactory = RakChannelFactory.client(
+                NioDatagramChannel.class,
+                channel -> UdpSocketBuffers.configure(
+                        channel,
+                        udpBuffers.backendReceiveBytes(),
+                        udpBuffers.sendBytes(),
+                        "backend connections"
+                )
+        );
         ChannelFuture future = new Bootstrap()
                 .group(eventLoopGroup)
                 .channelFactory(channelFactory)

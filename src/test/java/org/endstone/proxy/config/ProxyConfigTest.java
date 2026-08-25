@@ -22,6 +22,9 @@ class ProxyConfigTest {
 
         assertEquals("0.0.0.0", config.listenAddress().getHostString());
         assertEquals(19132, config.listenAddress().getPort());
+        assertEquals(8 * 1024 * 1024, config.udpBuffers().listenerReceiveBytes());
+        assertEquals(4 * 1024 * 1024, config.udpBuffers().backendReceiveBytes());
+        assertEquals(1024 * 1024, config.udpBuffers().sendBytes());
         assertEquals("127.0.0.1", config.backend().address().getHostString());
         assertEquals(19133, config.backend().address().getPort());
         assertEquals("default", config.hubBackendName());
@@ -170,6 +173,9 @@ class ProxyConfigTest {
         Properties properties = new Properties();
         properties.setProperty("listener.host", "127.0.0.1");
         properties.setProperty("listener.port", "19140");
+        properties.setProperty("network.udp.listenerReceiveBufferBytes", "2097152");
+        properties.setProperty("network.udp.backendReceiveBufferBytes", "1048576");
+        properties.setProperty("network.udp.sendBufferBytes", "524288");
         properties.setProperty("backend.name", "lobby");
         properties.setProperty("backend.host", "10.0.0.5");
         properties.setProperty("backend.port", "19141");
@@ -197,6 +203,9 @@ class ProxyConfigTest {
 
         assertEquals("127.0.0.1", config.listenAddress().getHostString());
         assertEquals(19140, config.listenAddress().getPort());
+        assertEquals(2097152, config.udpBuffers().listenerReceiveBytes());
+        assertEquals(1048576, config.udpBuffers().backendReceiveBytes());
+        assertEquals(524288, config.udpBuffers().sendBytes());
         assertEquals("lobby", config.backend().name());
         assertEquals("10.0.0.5", config.backend().address().getHostString());
         assertEquals(19141, config.backend().address().getPort());

@@ -11,7 +11,6 @@ import org.endstone.proxy.listener.ListenerSession;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,6 +25,7 @@ import java.util.zip.ZipOutputStream;
 public final class ProxyResourcePackRegistry {
     private static final ProxyResourcePackRegistry EMPTY = new ProxyResourcePackRegistry(Collections.emptyList());
     private static final String MANIFEST = "manifest.json";
+    private static final int MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
     /** 2000-01-01T00:00:00Z. Any fixed value inside the DOS-time range keeps folder zips reproducible. */
     private static final long ZIP_TIMESTAMP = 946684800000L;
 
@@ -160,11 +160,13 @@ public final class ProxyResourcePackRegistry {
 
     /** Reads a pack from bytes exactly as a {@code .mcpack} on disk would be read. */
     public static ProxyResourcePackEntry entryFrom(byte[] data) {
-        ManifestInfo manifest = parseManifest(data);
-        if (manifest == null) {
+        PackAnalysis analysis = analyzePack(data);
+        if (analysis == null) {
             return null;
         }
-        return new ProxyResourcePackEntry(manifest.uuid(), manifest.version(), manifest.name(), data, sha256(data));
+        ManifestInfo manifest = analysis.manifest();
+        return new ProxyResourcePackEntry(
+                manifest.uuid(), manifest.version(), manifest.name(), analysis.contentSize(), data, sha256(data));
     }
 
     /**
@@ -239,13 +241,12 @@ public final class ProxyResourcePackRegistry {
 
     private static ProxyResourcePackEntry loadPack(Path path) throws Exception {
         byte[] data = Files.readAllBytes(path);
-        ManifestInfo manifest = parseManifest(data);
-        if (manifest == null) {
+        ProxyResourcePackEntry entry = entryFrom(data);
+        if (entry == null) {
             System.out.printf("Skipping %s: no valid manifest.json found.%n", path.getFileName());
             return null;
         }
-        byte[] hash = sha256(data);
-        return new ProxyResourcePackEntry(manifest.uuid(), manifest.version(), manifest.name(), data, hash);
+        return entry;
     }
 
     /**
@@ -267,7 +268,12 @@ public final class ProxyResourcePackRegistry {
             return null;
         }
         byte[] data = zipDirectory(root);
-        return new ProxyResourcePackEntry(manifest.uuid(), manifest.version(), manifest.name(), data, sha256(data));
+        PackAnalysis analysis = analyzePack(data);
+        if (analysis == null) {
+            return null;
+        }
+        return new ProxyResourcePackEntry(
+                manifest.uuid(), manifest.version(), manifest.name(), analysis.contentSize(), data, sha256(data));
     }
 
     /**
@@ -327,19 +333,47 @@ public final class ProxyResourcePackRegistry {
                 || fileName.equalsIgnoreCase("desktop.ini");
     }
 
-    private static ManifestInfo parseManifest(byte[] zipData) {
+    /**
+     * Reads the manifest and measures the files represented by {@code ResourcePacksInfo.packSize}.
+     * That field is not the {@code .mcpack} byte length: it is the sum of the uncompressed ZIP
+     * entries. Comparing it with {@code data.length} made every valid cached pack look stale and
+     * forced every backend switch to download the same packs again before StartGame.
+     */
+    private static PackAnalysis analyzePack(byte[] zipData) {
+        ManifestInfo manifest = null;
+        long contentSize = 0;
+        byte[] buffer = new byte[8192];
         try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(zipData))) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
+                if (entry.isDirectory()) {
+                    continue;
+                }
                 String name = entry.getName().toLowerCase(Locale.ROOT);
-                if (name.equals("manifest.json") || name.endsWith("/manifest.json")) {
-                    byte[] manifestBytes = readAllBytes(zip);
-                    return parseManifestJson(new String(manifestBytes, StandardCharsets.UTF_8));
+                boolean captureManifest = manifest == null
+                        && (name.equals("manifest.json") || name.endsWith("/manifest.json"));
+                ByteArrayOutputStream manifestBytes = captureManifest ? new ByteArrayOutputStream() : null;
+                int read;
+                while ((read = zip.read(buffer)) != -1) {
+                    contentSize += read;
+                    if (contentSize > BackendPackCache.MAX_PACK_CONTENT_BYTES) {
+                        return null;
+                    }
+                    if (manifestBytes != null) {
+                        if (manifestBytes.size() + read > MAX_MANIFEST_BYTES) {
+                            return null;
+                        }
+                        manifestBytes.write(buffer, 0, read);
+                    }
+                }
+                if (manifestBytes != null) {
+                    manifest = parseManifestJson(manifestBytes.toString(StandardCharsets.UTF_8));
                 }
             }
         } catch (Exception ignored) {
+            return null;
         }
-        return null;
+        return manifest == null ? null : new PackAnalysis(manifest, contentSize);
     }
 
     @SuppressWarnings("unchecked")
@@ -418,26 +452,6 @@ public final class ProxyResourcePackRegistry {
         int[] result = new int[parts.length];
         for (int i = 0; i < parts.length; i++) {
             result[i] = Integer.parseInt(parts[i].trim());
-        }
-        return result;
-    }
-
-    private static byte[] readAllBytes(InputStream in) throws IOException {
-        byte[] buffer = new byte[8192];
-        List<byte[]> chunks = new ArrayList<>();
-        int total = 0;
-        int n;
-        while ((n = in.read(buffer)) != -1) {
-            byte[] chunk = new byte[n];
-            System.arraycopy(buffer, 0, chunk, 0, n);
-            chunks.add(chunk);
-            total += n;
-        }
-        byte[] result = new byte[total];
-        int pos = 0;
-        for (byte[] chunk : chunks) {
-            System.arraycopy(chunk, 0, result, pos, chunk.length);
-            pos += chunk.length;
         }
         return result;
     }
@@ -558,9 +572,9 @@ public final class ProxyResourcePackRegistry {
                     continue;
                 }
                 long advertised = backendEntry.getPackSize();
-                if (advertised > 0 && advertised != proxyPack.data().length) {
+                if (advertised > 0 && advertised != proxyPack.contentSize()) {
                     String description = proxyPack.name() + " v" + proxyPack.versionString()
-                            + " (" + proxyPack.data().length + " bytes cached, "
+                            + " (" + proxyPack.contentSize() + " content bytes cached, "
                             + advertised + " on the backend)";
                     if (reportedStale.add(description)) {
                         stale.add(description);
@@ -602,7 +616,7 @@ public final class ProxyResourcePackRegistry {
         return new ResourcePacksInfoPacket.Entry(
                 proxyPack.uuid(),
                 proxyPack.versionString(),
-                (long) proxyPack.data().length,
+                proxyPack.contentSize(),
                 backendEntry.getContentKey() == null ? "" : backendEntry.getContentKey(),
                 backendEntry.getSubPackName() == null ? "" : backendEntry.getSubPackName(),
                 backendEntry.getContentId() == null ? "" : backendEntry.getContentId(),
@@ -734,5 +748,8 @@ public final class ProxyResourcePackRegistry {
     // ---- inner records ----
 
     private record ManifestInfo(UUID uuid, int[] version, String name) {
+    }
+
+    private record PackAnalysis(ManifestInfo manifest, long contentSize) {
     }
 }

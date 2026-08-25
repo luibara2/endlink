@@ -76,10 +76,10 @@ final class BackendPackFetch {
                 continue;
             }
             int[] version = parseVersion(entry.getPackVersion());
-            // hasCurrent, not has: a pack edited without a version bump is still advertised under the
+            // hasCurrentContent, not has: a pack edited without a version bump is still advertised under the
             // version the proxy already has, and skipping on the version alone is what let a stale
             // copy be served for the rest of the proxy's life.
-            if (cache.hasCurrent(packId, version, entry.getPackSize(), null)) {
+            if (cache.hasCurrentContent(packId, version, entry.getPackSize(), null)) {
                 continue;
             }
             if (entry.getContentKey() != null && !entry.getContentKey().isEmpty()) {
@@ -91,10 +91,10 @@ final class BackendPackFetch {
                         packId, backendName);
                 continue;
             }
-            if (entry.getPackSize() > BackendPackCache.MAX_PACK_BYTES) {
+            if (entry.getPackSize() > BackendPackCache.MAX_PACK_CONTENT_BYTES) {
                 System.out.printf(
                         "Not caching resource pack %s from backend %s: %d bytes is over the %d byte limit.%n",
-                        packId, backendName, entry.getPackSize(), BackendPackCache.MAX_PACK_BYTES);
+                        packId, backendName, entry.getPackSize(), BackendPackCache.MAX_PACK_CONTENT_BYTES);
                 continue;
             }
             fetch.wanted.put(packId, new Wanted(packId, entry.getPackVersion()));

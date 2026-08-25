@@ -80,6 +80,7 @@ public class RakSessionCodec extends ChannelDuplexHandler {
     private Deque<IntRange> outgoingAcks;
     private Queue<IntRange> outgoingNaks;
     private long lastMinWeight;
+    private int queuedBytes;
 
     public RakSessionCodec(RakChannel channel) {
         this.channel = channel;
@@ -171,6 +172,7 @@ public class RakSessionCodec extends ChannelDuplexHandler {
             }
             outgoingPackets.release();
         }
+        this.queuedBytes = 0;
 
         if (log.isTraceEnabled()) {
             log.trace("RakNet Session ({} => {}) closed!", this.channel.localAddress(), this.getRemoteAddress());
@@ -264,8 +266,12 @@ public class RakSessionCodec extends ChannelDuplexHandler {
         long weight = this.getNextWeight(message.priority());
         if (packets.length == 1) {
             this.outgoingPackets.insert(weight, packets[0]);
+            this.queuedBytes += packets[0].getBuffer().readableBytes();
         } else {
             this.outgoingPackets.insertSeries(weight, packets);
+            for (EncapsulatedPacket packet : packets) {
+                this.queuedBytes += packet.getBuffer().readableBytes();
+            }
         }
     }
 
@@ -427,6 +433,19 @@ public class RakSessionCodec extends ChannelDuplexHandler {
     private void onTick() {
         long curTime = System.currentTimeMillis();
 
+        int maxQueuedBytes = this.channel.config().getOption(RakChannelOption.RAK_MAX_QUEUED_BYTES);
+        if (maxQueuedBytes > 0 && this.queuedBytes > maxQueuedBytes) {
+            log.warn("Disconnecting {} because its RakNet outbound queue reached {} bytes (limit {}).",
+                    this.getRemoteAddress(), this.queuedBytes, maxQueuedBytes);
+            this.disconnect(RakDisconnectReason.QUEUE_TOO_LONG);
+            return;
+        }
+
+        RakChannelMetrics metrics = this.getMetrics();
+        if (metrics != null) {
+            metrics.queuedPacketBytes(this.queuedBytes);
+        }
+
         if (this.state == RakState.UNCONNECTED) {
             if (this.isTimedOut(curTime)) {
                 this.close(RakDisconnectReason.TIMED_OUT);
@@ -515,6 +534,14 @@ public class RakSessionCodec extends ChannelDuplexHandler {
 
         IntRange range;
         while ((range = queue.poll()) != null) {
+            if (range.end < range.start || range.end >= this.datagramWriteIndex) {
+                if (log.isDebugEnabled()) {
+                    log.debug("Received {} with out-of-range indices [{}, {}] from {} (write index: {})",
+                            nack ? "NACK" : "ACK", range.start, range.end,
+                            this.getRemoteAddress(), this.datagramWriteIndex);
+                }
+                continue;
+            }
             for (int i = range.start; i <= range.end; i++) {
                 RakDatagramPacket datagram = this.sentDatagrams.remove(i);
                 if (datagram != null) {
@@ -605,6 +632,7 @@ public class RakSessionCodec extends ChannelDuplexHandler {
 
             transmissionBandwidth -= size;
             this.outgoingPackets.remove();
+            this.queuedBytes -= packet.getBuffer().readableBytes();
 
             // Send full datagram
             if (!datagram.tryAddPacket(packet, mtuSize)) {

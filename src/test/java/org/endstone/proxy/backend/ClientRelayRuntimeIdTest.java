@@ -70,6 +70,22 @@ final class ClientRelayRuntimeIdTest {
         assertEquals(CLIENT_ID, respawn.getRuntimeEntityId());
     }
 
+    @Test
+    void despawnedEntitiesDoNotAccumulateRuntimeMappingsForTheWholeSession() {
+        ProxyConnection connection = connection();
+        connection.setBackendPlayerRuntimeEntityId(20);
+        connection.setBackendPlayerRuntimeEntityId(30);
+
+        long clientEntityId = connection.registerEntityRuntimeMapping(200, 20);
+        assertEquals(1, connection.trackedRuntimeEntityMappingCount());
+
+        connection.removeEntityRuntimeMapping(200);
+
+        assertEquals(0, connection.trackedRuntimeEntityMappingCount());
+        assertEquals(clientEntityId, connection.toBackendRuntimeEntityId(clientEntityId),
+                "both directions of the stale mapping must be released");
+    }
+
     /** A connection that joined on a backend using id 1 and then switched to one using id 109. */
     private static ClientRelayPacketHandler handlerAfterSwitch() {
         ProxyConnection connection = connection();
