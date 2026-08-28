@@ -150,4 +150,38 @@ class ProtocolRegistryTest {
         assertTrue(registry.findBinding(2168, 2169).isEmpty());
         assertTrue(registry.findBinding(1001, 2169).isEmpty());
     }
+
+    /**
+     * Endstone is moving from 1.26.44 to 1.26.45, and a fleet is mixed for as long as that takes.
+     * Both backend legs have to resolve for the same 1.26.45 player, because the session's protocol
+     * binding is re-resolved on every backend connect — a switch between the two is a switch between
+     * these two bindings.
+     */
+    @Test
+    void a_1_26_45_playerReachesBothA_2168_andA_2169_backend() {
+        ProtocolRegistry registry = ProtocolRegistry.createDefault();
+
+        ProtocolBinding toOldBackend = registry.findBinding(2169, 2168).orElseThrow();
+        ProtocolBinding toNewBackend = registry.findBinding(2169, 2169).orElseThrow();
+
+        assertEquals(2168, toOldBackend.backendCodec().getProtocolVersion());
+        assertEquals(2169, toNewBackend.backendCodec().getProtocolVersion());
+        // The client leg is the same codec either way; only the backend leg moves.
+        assertEquals(2169, toOldBackend.clientCodec().getProtocolVersion());
+        assertEquals(2169, toNewBackend.clientCodec().getProtocolVersion());
+    }
+
+    /**
+     * A 1.26.45 backend must be detectable. Endstone 1.26.45 sets NetworkProtocolVersion to 2169, so
+     * that is what its pong advertises and what backend.protocol=auto reads back; an unknown codec
+     * there is refused as an unsupported backend before the player is ever told anything useful.
+     */
+    @Test
+    void a_2169_backendIsAKnownBackendCodec() {
+        ProtocolRegistry registry = ProtocolRegistry.createDefault();
+
+        assertTrue(registry.findBackendCodec(2169).isPresent());
+        assertEquals(2169, registry.findBackendCodec(2169).orElseThrow().getProtocolVersion());
+        assertEquals("1.26.45", registry.findBackendCodec(2169).orElseThrow().getMinecraftVersion());
+    }
 }
