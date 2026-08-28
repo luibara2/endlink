@@ -19,15 +19,25 @@ On first start it writes a fully documented `config.properties` and creates a `p
 
 > ### Status: in production on one server, still young
 >
-> **Proven in real use:** a Minecraft 1.26.40 client against 1.26.40 backends. Players join, play,
-> and switch between backends keeping their session, identity and permissions. That has run a live
-> server at around ten concurrent players for a week.
+> **Proven in real use:** Minecraft 1.26.40 through 1.26.45 clients against 1.26.40 through 1.26.45
+> backends, including a 1.26.45 client and a 1.26.44 client on the same backend at once. Players
+> join, play, and switch between backends keeping their session, identity and permissions. That has
+> run a live server at around ten concurrent players.
 >
-> **New in v0.2.0, verified but not yet at scale:** the cross-backend item, entity and block
+> **New in v0.5.0:** Minecraft 1.26.45, protocol 2169. Mojang renumbered the protocol in a hotfix
+> for a single field, and server software has not followed — so a 1.26.45 client on a 1.26.44
+> backend is the configuration to expect for as long as that lasts, and it needs no configuration
+> here. Confirmed on a live server. See
+> [1.26.45 clients on 1.26.44 backends](#12645-clients-on-12644-backends).
+>
+> **Also in v0.5.0, not confirmed in play:** a fix for a mount that stops taking input after a
+> backend switch ([#1](https://github.com/luibara2/endlink/issues/1)). The cause was found by
+> reading the relay and the fix is covered by tests, but nobody has ridden a horse across a switch
+> to confirm it. If mounts still misbehave after a switch, that issue is where to say so.
+>
+> **Verified but not yet at scale (since v0.2.0):** the cross-backend item, entity and block
 > registries, resource packs loaded from unpacked folders, and backend packs cached and served by the
-> proxy. Custom items, entities and blocks have been confirmed rendering correctly across a backend
-> switch, and backend packs confirmed downloading and serving — by hand, with a handful of players,
-> not yet under a full server. If something in this release misbehaves, this is where to look first.
+> proxy. Confirmed by hand with a handful of players, not under a full server.
 >
 > **Deliberately unfinished:** the older-version translation chain (see
 > [Versions](#versions-run-the-latest-on-both-ends)). Run the current Minecraft release on both ends.
