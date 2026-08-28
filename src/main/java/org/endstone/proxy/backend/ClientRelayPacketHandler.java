@@ -26,6 +26,7 @@ import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action
 import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.TransferItemStackRequestAction;
 import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.ItemUseTransaction;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket;
 import org.cloudburstmc.protocol.bedrock.packet.UnknownPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ItemStackRequestPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
@@ -677,6 +678,28 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
             }
         } else if (packet instanceof InventoryTransactionPacket transaction) {
             transaction.setRuntimeEntityId(connection.toBackendRuntimeEntityId(transaction.getRuntimeEntityId()));
+        } else if (packet instanceof PlayerAuthInputPacket authInput) {
+            // The vehicle the client believes it is riding, named by runtime id. A mounted client
+            // repeats this on every input tick and the backend steers the vehicle from it, so an
+            // id the backend does not recognise means the mount takes no input at all: the player
+            // sits on it and it will not move, turn or dismount cleanly.
+            //
+            // This hid behind the id mapping being an identity on the first backend. Nothing
+            // collides there, toBackendRuntimeEntityId returns its argument, and the missing
+            // rewrite is invisible. After a switch the client keeps its original id while the new
+            // backend issues its own, toClientRuntimeEntityId starts handing out synthetic ids,
+            // and only then does the unrewritten field name the wrong entity — which is why this
+            // reads as "riding works on server1 and not on server2".
+            authInput.setPredictedVehicle(
+                    connection.toBackendRuntimeEntityId(authInput.getPredictedVehicle()));
+        } else if (packet instanceof MovePlayerPacket movePlayer) {
+            // The pre-server-authoritative spelling of the same thing, still sent by older clients
+            // reaching a modern backend through a translator. Its clientbound counterpart is
+            // rewritten in BackendRelayPacketHandler.rewriteClientboundRuntimeIds; without this the
+            // pair is one-sided, which is the shape of bug the list above exists to prevent.
+            movePlayer.setRuntimeEntityId(backendPlayerRuntimeEntityId);
+            movePlayer.setRidingRuntimeEntityId(
+                    connection.toBackendRuntimeEntityId(movePlayer.getRidingRuntimeEntityId()));
         }
     }
 

@@ -2,7 +2,9 @@ package org.endstone.proxy.backend;
 
 import org.cloudburstmc.protocol.bedrock.packet.AnimatePacket;
 import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
+import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerActionPacket;
+import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RespawnPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetLocalPlayerAsInitializedPacket;
 import org.endstone.proxy.auth.AuthData;
@@ -15,6 +17,7 @@ import java.security.KeyPair;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
  * The client keeps the runtime entity id from its first StartGame for the whole proxy session, while
@@ -60,6 +63,53 @@ final class ClientRelayRuntimeIdTest {
     }
 
     @Test
+    void rewritesTheVehicleAMountedPlayerNamesOntoTheCurrentBackendsId() {
+        // The horse the player is sitting on. The new backend gave it runtime id 1, which is the id
+        // the client already uses for itself, so the proxy had to invent a synthetic client-side id
+        // for it — and from then on the two sides disagree about what "the vehicle" is called.
+        ProxyConnection connection = connectionAfterSwitch();
+        long clientVehicleId = connection.registerEntityRuntimeMapping(500, CLIENT_ID);
+        assertNotEquals(CLIENT_ID, clientVehicleId,
+                "the horse must not keep an id the client already spent on itself");
+
+        PlayerAuthInputPacket authInput = new PlayerAuthInputPacket();
+        authInput.setPredictedVehicle(clientVehicleId);
+
+        new ClientRelayPacketHandler(connection, null, null).normalizePlayerRuntimeId(authInput);
+
+        // Left alone this names an entity the backend has never heard of, and the mount silently
+        // ignores every input the player gives it.
+        assertEquals(CLIENT_ID, authInput.getPredictedVehicle());
+    }
+
+    @Test
+    void rewritesTheRiddenEntityOnALegacyMove() {
+        ProxyConnection connection = connectionAfterSwitch();
+        long clientVehicleId = connection.registerEntityRuntimeMapping(500, CLIENT_ID);
+
+        MovePlayerPacket move = new MovePlayerPacket();
+        move.setRuntimeEntityId(CLIENT_ID);
+        move.setRidingRuntimeEntityId(clientVehicleId);
+
+        new ClientRelayPacketHandler(connection, null, null).normalizePlayerRuntimeId(move);
+
+        assertEquals(BACKEND_ID, move.getRuntimeEntityId());
+        assertEquals(CLIENT_ID, move.getRidingRuntimeEntityId());
+    }
+
+    @Test
+    void leavesAnUnmountedInputAlone() {
+        // Not riding anything is spelled zero, and toBackendRuntimeEntityId must not turn that into
+        // an entity reference — every input tick of every player on foot carries this field.
+        PlayerAuthInputPacket authInput = new PlayerAuthInputPacket();
+        authInput.setPredictedVehicle(0);
+
+        handlerAfterSwitch().normalizePlayerRuntimeId(authInput);
+
+        assertEquals(0, authInput.getPredictedVehicle());
+    }
+
+    @Test
     void leavesPacketsAloneBeforeAnyStartGameHasArrived() {
         RespawnPacket respawn = new RespawnPacket();
         respawn.setState(RespawnPacket.State.CLIENT_READY);
@@ -88,11 +138,15 @@ final class ClientRelayRuntimeIdTest {
 
     /** A connection that joined on a backend using id 1 and then switched to one using id 109. */
     private static ClientRelayPacketHandler handlerAfterSwitch() {
+        return new ClientRelayPacketHandler(connectionAfterSwitch(), null, null);
+    }
+
+    private static ProxyConnection connectionAfterSwitch() {
         ProxyConnection connection = connection();
         connection.setBackendPlayerRuntimeEntityId(CLIENT_ID);
         connection.setBackendPlayerRuntimeEntityId(BACKEND_ID);
         assertEquals(CLIENT_ID, connection.clientPlayerRuntimeEntityId());
-        return new ClientRelayPacketHandler(connection, null, null);
+        return connection;
     }
 
     private static ProxyConnection connection() {
