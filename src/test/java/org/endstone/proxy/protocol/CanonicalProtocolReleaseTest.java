@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -132,5 +133,51 @@ class CanonicalProtocolReleaseTest {
         // ...and a bare protocol number falls through to "not stated", which means current release.
         assertTrue(BedrockRelease.carriesRemoveScoreKeyedConstant(
                 CanonicalProtocol.declaredRelease("2168")));
+    }
+
+    /**
+     * 2168 and 2169 are two numbers for one wire format. Everything the proxy gates on
+     * "is this cross-protocol" is a workaround for a backend that genuinely speaks an older format,
+     * and applying those to a 1.26.45 client on a 1.26.44 backend cost a disabled blob cache, a
+     * clamped chunk radius, a cleared block-registry checksum and two dropped
+     * ServerboundDiagnosticsPacket log lines a second, per player.
+     */
+    @Test
+    void theRenumberedProtocolSharesItsWireFormatWithTheOneItReplaced() {
+        assertTrue(CanonicalProtocol.sharesWireFormat(2169, 2168));
+        assertTrue(CanonicalProtocol.sharesWireFormat(2168, 2169));
+        assertTrue(CanonicalProtocol.sharesWireFormat(2169, 2169));
+        assertTrue(CanonicalProtocol.sharesWireFormat(2168, 2168));
+    }
+
+    @Test
+    void aRealVersionGapIsStillARealVersionGap() {
+        // These pairs need the workarounds. Widening the family would silently switch them off.
+        assertFalse(CanonicalProtocol.sharesWireFormat(2169, 1001));
+        assertFalse(CanonicalProtocol.sharesWireFormat(2168, 1001));
+        assertFalse(CanonicalProtocol.sharesWireFormat(1001, 975));
+        assertFalse(CanonicalProtocol.sharesWireFormat(975, 898));
+        assertTrue(CanonicalProtocol.sharesWireFormat(1001, 1001));
+    }
+
+    /**
+     * The packets the cross-protocol path drops serverbound all exist on 2168, so a 1.26.45 client
+     * must not have them dropped on the way to a 1.26.44 backend. This pins the codec side of that:
+     * if the serializer is there, dropping the packet is a bug.
+     */
+    @Test
+    void theDroppedCrossProtocolPacketsExistOnBothSidesOfThisPair() {
+        assertNotNull(CanonicalProtocol.V1_26_40.codec().getPacketDefinition(
+                org.cloudburstmc.protocol.bedrock.packet.ServerboundDiagnosticsPacket.class),
+                "ServerboundDiagnosticsPacket must exist on 2168");
+        assertNotNull(CanonicalProtocol.V1_26_45.codec().getPacketDefinition(
+                org.cloudburstmc.protocol.bedrock.packet.ServerboundDiagnosticsPacket.class),
+                "ServerboundDiagnosticsPacket must exist on 2169");
+        assertNotNull(CanonicalProtocol.V1_26_40.codec().getPacketDefinition(
+                org.cloudburstmc.protocol.bedrock.packet.CameraAimAssistInstructionPacket.class),
+                "CameraAimAssistInstructionPacket must exist on 2168");
+        assertNotNull(CanonicalProtocol.V1_26_45.codec().getPacketDefinition(
+                org.cloudburstmc.protocol.bedrock.packet.CameraAimAssistInstructionPacket.class),
+                "CameraAimAssistInstructionPacket must exist on 2169");
     }
 }

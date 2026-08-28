@@ -3005,8 +3005,12 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
     }
 
     private boolean isCrossProtocol() {
-        return connection.sessionProfile().clientCodec().getProtocolVersion()
-                != connection.sessionProfile().backendCodec().getProtocolVersion();
+        // Not a bare inequality: 2168 and 2169 are different numbers for the same wire format, and
+        // treating them as a version gap turns every workaround below on for a pair that needs
+        // none of them. See CanonicalProtocol#sharesWireFormat.
+        return !CanonicalProtocol.sharesWireFormat(
+                connection.sessionProfile().clientCodec().getProtocolVersion(),
+                connection.sessionProfile().backendCodec().getProtocolVersion());
     }
 
     /**

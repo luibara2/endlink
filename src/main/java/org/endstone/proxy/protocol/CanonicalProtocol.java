@@ -143,6 +143,38 @@ public enum CanonicalProtocol {
         throw new IllegalArgumentException("Unsupported backend protocol: " + value);
     }
 
+    /**
+     * Whether two protocol numbers describe the same wire format, and therefore need no translation
+     * between them.
+     *
+     * <p>Normally this is just equality. 2168 and 2169 are the exception: 1.26.45 renumbered the
+     * protocol for a single field — the {@code RemoveScore} constant — and each side's own codec
+     * helper already writes its own shape for that one field when a packet is re-encoded. Every
+     * other packet, the block palette, the chunk format and the entity data layout are identical.
+     *
+     * <p><b>This exists because "the numbers differ" is not the same question as "the versions
+     * differ", and the proxy has a long history of conflating them.</b> Everything gated on
+     * {@code isCrossProtocol()} is a workaround for a backend that genuinely speaks an older
+     * format: the blob cache is turned off, the initial chunk radius is clamped, the StartGame
+     * block-registry checksum is cleared, and a handful of serverbound packets the older codecs
+     * never had are dropped. Applied to a 1.26.45 client on a 1.26.44 backend, every one of those
+     * is wrong — the packets exist on both ends, the palettes match, and the cache would have
+     * worked — and the dropped {@code ServerboundDiagnosticsPacket} alone produced two log lines a
+     * second, for every player, forever.
+     *
+     * <p>So a new codec that is wire-compatible with its neighbour must be named here as well as
+     * registered. Adding one without this makes it join, and then quietly degrades it.
+     */
+    public static boolean sharesWireFormat(int protocolVersion, int otherProtocolVersion) {
+        return protocolVersion == otherProtocolVersion
+                || (isRemoveScoreOnlyFamily(protocolVersion) && isRemoveScoreOnlyFamily(otherProtocolVersion));
+    }
+
+    /** 1.26.40 through 1.26.44 (2168) and 1.26.45 (2169): one wire format, one differing field. */
+    private static boolean isRemoveScoreOnlyFamily(int protocolVersion) {
+        return protocolVersion == 2168 || protocolVersion == 2169;
+    }
+
     public static Optional<CanonicalProtocol> fromProtocolVersion(int protocolVersion) {
         for (CanonicalProtocol protocol : values()) {
             if (protocol.protocolVersion() == protocolVersion) {

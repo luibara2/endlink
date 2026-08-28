@@ -54,6 +54,7 @@ import org.cloudburstmc.protocol.bedrock.packet.SubChunkRequestPacket;
 import org.cloudburstmc.protocol.common.PacketSignal;
 import org.endstone.proxy.command.CommandInterception;
 import org.endstone.proxy.command.ProxyCommandInterceptor;
+import org.endstone.proxy.protocol.CanonicalProtocol;
 
 public final class ClientRelayPacketHandler implements BedrockPacketHandler {
     private static final int INITIAL_CROSS_PROTOCOL_BACKEND_CHUNK_RADIUS = 8;
@@ -960,8 +961,12 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
     }
 
     private boolean isCrossProtocol() {
-        return connection.sessionProfile().clientCodec().getProtocolVersion()
-                != connection.sessionProfile().backendCodec().getProtocolVersion();
+        // Not a bare inequality: 2168 and 2169 are different numbers for the same wire format, and
+        // treating them as a version gap turns every workaround below on for a pair that needs
+        // none of them. See CanonicalProtocol#sharesWireFormat.
+        return !CanonicalProtocol.sharesWireFormat(
+                connection.sessionProfile().clientCodec().getProtocolVersion(),
+                connection.sessionProfile().backendCodec().getProtocolVersion());
     }
 
     /**
