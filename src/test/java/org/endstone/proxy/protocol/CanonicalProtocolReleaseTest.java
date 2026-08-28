@@ -64,8 +64,38 @@ class CanonicalProtocolReleaseTest {
     @Test
     void stillRefusesAReleaseNoCodecSpeaks() {
         assertThrows(IllegalArgumentException.class, () -> CanonicalProtocol.fromConfig("1.26.50"));
-        assertThrows(IllegalArgumentException.class, () -> CanonicalProtocol.fromConfig("1.26.45"));
         assertThrows(IllegalArgumentException.class, () -> CanonicalProtocol.fromConfig("nonsense"));
+    }
+
+    @Test
+    void acceptsTheReleaseThatRenumberedTo2169() {
+        // 1.26.45 threw here until it had a codec of its own. It is a distinct protocol, not a
+        // member of the 2168 family, so it resolves to its own entry rather than widening 1.26.40's.
+        assertEquals(CanonicalProtocol.V1_26_45, CanonicalProtocol.fromConfig("1.26.45"));
+        assertEquals(CanonicalProtocol.V1_26_45, CanonicalProtocol.fromConfig("2169"));
+        assertEquals(CanonicalProtocol.V1_26_45, CanonicalProtocol.fromConfig("26.45"));
+        assertEquals(2169, CanonicalProtocol.V1_26_45.protocolVersion());
+        assertEquals("1.26.45", CanonicalProtocol.V1_26_45.minecraftVersion());
+    }
+
+    @Test
+    void oneNumberOneReleaseNeedsNoReleaseOverride() {
+        // The reason 2168 carries a newestRelease at all is that five releases share it. 2169 is one
+        // release, so the two answers must agree — if they ever drift, BedrockRelease starts being
+        // asked a question about 2169 that it has no business answering.
+        assertEquals("1.26.45", CanonicalProtocol.V1_26_45.newestRelease());
+        assertEquals(
+                CanonicalProtocol.V1_26_45.minecraftVersion(),
+                CanonicalProtocol.V1_26_45.newestRelease());
+        assertTrue(CanonicalProtocol.V1_26_45.coversRelease("1.26.45"));
+        assertFalse(CanonicalProtocol.V1_26_45.coversRelease("1.26.44"));
+    }
+
+    @Test
+    void theProxyNowAdvertisesTheRenumberedRelease() {
+        // newest() is what the server list shows and what a client is matched against, so a 2169
+        // client is only reachable if this moved with the new codec.
+        assertEquals(CanonicalProtocol.V1_26_45, CanonicalProtocol.newest());
     }
 
     @Test

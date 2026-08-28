@@ -132,6 +132,10 @@ public final class BedrockRelease {
      * running a release nobody tested against.
      *
      * <p>Does nothing for any protocol but 2168, which is the only one where the release matters.
+     * Protocol 2169 renumbered the difference away, so although its helper is a
+     * {@code BedrockCodecHelper_v2168} by inheritance and reaches the call below, it ignores the
+     * write and keeps the 1.26.45 shape. That matters because an unparseable version string defaults
+     * to {@code true} here, and a 2169 peer must never be given the 1.26.44 shape on that guess.
      */
     public static void applyTo(BedrockSession session, String minecraftVersion) {
         if (session == null) {

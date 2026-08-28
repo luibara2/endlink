@@ -63,7 +63,15 @@ public final class ProtocolRegistry {
                 .codec(CanonicalProtocol.V1_26_20)
                 .codec(CanonicalProtocol.V1_26_30)
                 .codec(CanonicalProtocol.V1_26_40)
+                .codec(CanonicalProtocol.V1_26_45)
                 // Directed adjacent translators (newer -> older). Longer gaps are auto-chained.
+                // 2169 -> 2168 carries no packet rewriting. The only difference between the two is
+                // the RemoveScore constant, and that is settled per-leg by each codec's own helper
+                // when it encodes: a packet decoded from a 2169 client is a plain POJO by the time
+                // the 2168 backend codec writes it. An identity edge is the whole translation, and
+                // it is what lets a 1.26.45 client reach the 1.26.44 backends Endstone still builds
+                // against.
+                .edge(CanonicalProtocol.V1_26_45, CanonicalProtocol.V1_26_40, IdentityTranslator898.INSTANCE)
                 .edge(CanonicalProtocol.V1_26_40, CanonicalProtocol.V1_26_30, ModernClientTo1001Translator.INSTANCE)
                 .edge(CanonicalProtocol.V1_26_30, CanonicalProtocol.V1_26_20, ModernClientTo975Translator.INSTANCE)
                 .edge(CanonicalProtocol.V1_26_20, CanonicalProtocol.V1_26_10, ModernClientTo944Translator.INSTANCE)

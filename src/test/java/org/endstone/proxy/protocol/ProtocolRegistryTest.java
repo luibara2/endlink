@@ -112,4 +112,42 @@ class ProtocolRegistryTest {
         assertEquals(PlayStatusPacket.Status.LOGIN_FAILED_SERVER_OLD,
                 registry.unsupportedStatus(CanonicalProtocol.newest().protocolVersion() + 1));
     }
+
+    /**
+     * The deployment this codec was added for: Endstone still builds against 1.26.44, so a server
+     * that lets its players update to 1.26.45 is running 2169 on one leg and 2168 on the other. If
+     * this pair does not resolve, a 1.26.45 client is refused at the door.
+     */
+    @Test
+    void a_1_26_45_clientReachesA_1_26_44_backend() {
+        ProtocolRegistry registry = ProtocolRegistry.createDefault();
+
+        assertTrue(registry.findClientCodec(2169).isPresent());
+        ProtocolBinding binding = registry.findBinding(2169, 2168).orElseThrow();
+
+        assertEquals(2169, binding.clientCodec().getProtocolVersion());
+        assertEquals(2168, binding.backendCodec().getProtocolVersion());
+        // No packet rewriting: the one field that differs is handled by each leg's own codec helper.
+        assertSame(IdentityTranslator898.INSTANCE, binding.translator());
+    }
+
+    @Test
+    void a_1_26_45_clientStillReachesTheOlderBackendsBelow_2168() {
+        ProtocolRegistry registry = ProtocolRegistry.createDefault();
+
+        // Chained through 2168, which is the point of the graph being a graph.
+        assertTrue(registry.findBinding(2169, 1001).isPresent());
+        assertTrue(registry.findBinding(2169, 2169).isPresent());
+        assertEquals(1001, registry.findBinding(2169, 1001).orElseThrow().backendCodec().getProtocolVersion());
+    }
+
+    @Test
+    void theGraphStillOnlyRunsNewerToOlder() {
+        ProtocolRegistry registry = ProtocolRegistry.createDefault();
+
+        // A 1.26.44 client against a 1.26.45 backend is an upgrade edge the proxy does not own.
+        // Nothing about adding 2169 may quietly create one.
+        assertTrue(registry.findBinding(2168, 2169).isEmpty());
+        assertTrue(registry.findBinding(1001, 2169).isEmpty());
+    }
 }

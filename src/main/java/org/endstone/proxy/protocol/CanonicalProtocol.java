@@ -7,6 +7,7 @@ import org.cloudburstmc.protocol.bedrock.codec.v944.Bedrock_v944;
 import org.cloudburstmc.protocol.bedrock.codec.v975.Bedrock_v975;
 import org.cloudburstmc.protocol.bedrock.codec.v1001.Bedrock_v1001;
 import org.cloudburstmc.protocol.bedrock.codec.v2168.Bedrock_v2168;
+import org.cloudburstmc.protocol.bedrock.codec.v2169.Bedrock_v2169;
 
 import java.util.Optional;
 
@@ -21,7 +22,11 @@ public enum CanonicalProtocol {
     // 1.26.40 through 1.26.44 then all shipped under 2168 — and 1.26.44 changed a packet layout
     // anyway, which is why naming the release matters and the protocol number is not enough. See
     // BedrockRelease.
-    V1_26_40(Bedrock_v2168.CODEC, "1.26.44");
+    V1_26_40(Bedrock_v2168.CODEC, "1.26.44"),
+    // 1.26.45 is a hotfix that renumbered to 2169 and dropped the RemoveScore constant 1.26.44 added.
+    // One codec, one release: the protocol number identifies the wire format again, so this entry
+    // needs no newest-release override and BedrockRelease has nothing to decide for it.
+    V1_26_45(Bedrock_v2169.CODEC);
 
     private final BedrockCodec codec;
 

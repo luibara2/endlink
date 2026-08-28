@@ -1,5 +1,8 @@
 package org.endstone.proxy.protocol;
 
+import org.cloudburstmc.protocol.bedrock.codec.v2168.Bedrock_v2168;
+import org.cloudburstmc.protocol.bedrock.codec.v2168.BedrockCodecHelper_v2168;
+import org.cloudburstmc.protocol.bedrock.codec.v2169.Bedrock_v2169;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -109,5 +112,33 @@ class BedrockReleaseTest {
     @Test
     void toleratesAnAbsentSession() {
         BedrockRelease.applyTo(null, "1.26.44");
+    }
+
+    /**
+     * A 2169 peer's wire shape is settled by its protocol number. This pins the one way it could
+     * still be lost: applyTo tests for the 2168 helper, the 2169 helper is one by inheritance, and an
+     * unreadable version string defaults to the 1.26.44 shape. Were the write to land, every
+     * scoreboard removal sent to a 1.26.45 client would carry a byte it does not expect.
+     */
+    @Test
+    void aRenumberedHelperKeepsItsShapeWhateverVersionIsClaimed() {
+        BedrockCodecHelper_v2168 helper = (BedrockCodecHelper_v2168) Bedrock_v2169.CODEC.createHelper();
+        assertFalse(helper.isRemoveScoreKeyedConstant());
+
+        for (String claimed : new String[]{"1.26.44", "1.26.45", "9.9.9", "", "not a version"}) {
+            helper.setRemoveScoreKeyedConstant(true);
+            assertFalse(helper.isRemoveScoreKeyedConstant(),
+                    "a 2169 helper must keep the 1.26.45 shape, but claimed version " + claimed + " changed it");
+        }
+    }
+
+    /** The 2168 helper must stay switchable — five releases share that number and disagree. */
+    @Test
+    void theSharedProtocolsHelperIsStillSwitchable() {
+        BedrockCodecHelper_v2168 helper = (BedrockCodecHelper_v2168) Bedrock_v2168.CODEC.createHelper();
+        helper.setRemoveScoreKeyedConstant(false);
+        assertFalse(helper.isRemoveScoreKeyedConstant());
+        helper.setRemoveScoreKeyedConstant(true);
+        assertTrue(helper.isRemoveScoreKeyedConstant());
     }
 }

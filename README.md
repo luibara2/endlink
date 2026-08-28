@@ -3,7 +3,7 @@
 [![Build](https://github.com/luibara2/endlink/actions/workflows/build.yml/badge.svg)](https://github.com/luibara2/endlink/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/luibara2/endlink?include_prereleases&sort=semver)](https://github.com/luibara2/endlink/releases)
 [![Licence](https://img.shields.io/github/license/luibara2/endlink)](LICENSE)
-[![Minecraft](https://img.shields.io/badge/Minecraft%20Bedrock-1.26.40-brightgreen)](https://github.com/luibara2/endlink#versions-run-the-latest-on-both-ends)
+[![Minecraft](https://img.shields.io/badge/Minecraft%20Bedrock-1.26.45-brightgreen)](https://github.com/luibara2/endlink#versions-run-the-latest-on-both-ends)
 
 A Velocity-style proxy for Minecraft: Bedrock with Endstone/BDS backends. Players stay connected to
 the proxy while switching between backend servers; the proxy owns authentication and forges offline
@@ -80,6 +80,19 @@ real audience to build for. Effort spent there buys nothing that keeping current
 Practically: after a Minecraft update, update the backends promptly. `backend.protocol=auto` reads
 the version from each backend rather than trusting a pinned value, so the proxy follows them without
 a config change — the pinned-value route is how version skew gets introduced by accident.
+
+### 1.26.45 clients on 1.26.44 backends
+
+This is the gap right now, and it is the one the rule above is about. Minecraft 1.26.45 is a hotfix
+that renumbered the protocol from 2168 to 2169, while server software — Endstone included — is still
+built against 1.26.44. Clients update themselves; backends do not.
+
+Endlink speaks both, so a 1.26.45 player reaches a 1.26.44 backend with nothing to configure. The
+two protocols differ in exactly one field, a scoreboard removal, and the proxy converts it on the
+way through. Leave `backend.protocol=auto` and it resolves the pair on its own.
+
+This is the supported short-term gap, not a reason to stay on 1.26.44 — move the backends up when
+their server software does.
 
 ## Configuration
 
