@@ -117,6 +117,7 @@ The settings worth knowing before a first run:
 | `backends` / `backend.<name>.host` | The servers players can be sent to |
 | `backendVerification.sharedSecret` | Must match EndlinkGuard's `shared_secret` on every backend |
 | `permissions.admins` | XUIDs allowed to run `/send`, `/alert`, `/glist`, `/perm` |
+| `commands.enabled` | Set `false` to disable all proxy command injection and handling, including qualified `/proxy:*` forms; backend commands are forwarded unchanged |
 | `backend.protocol` | Leave `auto` — it reads the version from the backend rather than trusting a pinned value |
 | `network.udp.*BufferBytes` | Kernel buffers for the shared listener and backend sockets. Endlink warns when the OS caps them; on Linux, raise `net.core.rmem_max` / `net.core.wmem_max` above the configured values to avoid RakNet retransmission stalls under bursts |
 | `publicAddress` | Only for networks with a Java backend: the address players are sent back to when a move needs a reconnect. Empty uses the address each player connected with, which is usually right |
