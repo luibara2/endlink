@@ -48,6 +48,16 @@ class StartGameClientFixupsTest {
     }
 
     @Test
+    void preservesBackendCommandCapabilityWhenProxyCommandsAreDisabled() {
+        StartGamePacket startGame = backendStartGame();
+
+        StartGameClientFixups fixups = StartGameClientFixups.apply(startGame, false);
+
+        assertFalse(startGame.isCommandsEnabled());
+        assertFalse(fixups.enabledCommands());
+    }
+
+    @Test
     void relaysTheBackendsDefaultPlayerPermissionUnchanged() {
         StartGamePacket startGame = backendStartGame();
 

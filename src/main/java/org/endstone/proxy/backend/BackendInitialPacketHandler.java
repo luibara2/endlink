@@ -208,7 +208,8 @@ public final class BackendInitialPacketHandler implements BedrockPacketHandler {
                             commandRegistry,
                             visibleBackendNames(),
                             this::advertiseCommand,
-                            playerEnum
+                            playerEnum,
+                            commandsConfig.enabled()
                     ),
                     verifiedXuidLookup,
                     failover,
@@ -222,7 +223,8 @@ public final class BackendInitialPacketHandler implements BedrockPacketHandler {
                     new ProxyCommandInterceptor(
                             commandRegistry,
                             passthroughCommands,
-                            commandsConfig.qualifier()
+                            commandsConfig.qualifier(),
+                            commandsConfig.enabled()
                     ),
                     commandRouter
             ));

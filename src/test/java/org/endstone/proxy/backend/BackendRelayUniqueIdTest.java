@@ -1,7 +1,9 @@
 package org.endstone.proxy.backend;
 
+import org.cloudburstmc.protocol.bedrock.data.entity.EntityLinkData;
 import org.cloudburstmc.protocol.bedrock.packet.BossEventPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
+import org.cloudburstmc.protocol.bedrock.packet.SetEntityLinkPacket;
 import org.endstone.proxy.auth.AuthData;
 import org.endstone.proxy.auth.ClientLogin;
 import org.endstone.proxy.crypto.BedrockCrypto;
@@ -43,6 +45,27 @@ final class BackendRelayUniqueIdTest {
 
         assertEquals(syntheticBossId, bossEvent.getBossUniqueEntityId());
         assertEquals(CLIENT_PLAYER_ID, bossEvent.getPlayerUniqueEntityId());
+    }
+
+    @Test
+    void mountLinksUseUniqueIdsAndOnlyRewriteTheLocalPlayer() {
+        long vehicleUniqueId = 50_000L;
+        SetEntityLinkPacket linkPacket = new SetEntityLinkPacket();
+        linkPacket.setEntityLink(new EntityLinkData(
+                vehicleUniqueId,
+                BACKEND_PLAYER_ID,
+                EntityLinkData.Type.RIDER,
+                true,
+                true,
+                0.25f
+        ));
+
+        handlerAfterSwitch().rewriteClientboundRuntimeIds(linkPacket);
+
+        assertEquals(vehicleUniqueId, linkPacket.getEntityLink().getFrom());
+        assertEquals(CLIENT_PLAYER_ID, linkPacket.getEntityLink().getTo());
+        assertEquals(EntityLinkData.Type.RIDER, linkPacket.getEntityLink().getType());
+        assertEquals(0.25f, linkPacket.getEntityLink().getVehicleAngularVelocity());
     }
 
     private static BackendRelayPacketHandler handlerAfterSwitch() {

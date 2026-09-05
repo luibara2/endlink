@@ -32,6 +32,7 @@ public final class AvailableCommandsInjector {
     private final List<String> backendNames;
     private final Predicate<String> visible;
     private final ProxyPlayerEnum playerEnum;
+    private final boolean enabled;
 
     /**
      * Injects every registered command, for callers with no player in scope.
@@ -43,7 +44,7 @@ public final class AvailableCommandsInjector {
      * {@code BackendCommandRouter} checks again on execution.</p>
      */
     public AvailableCommandsInjector(ProxyCommandRegistry registry, Collection<String> backendNames) {
-        this(registry, backendNames, name -> true, null);
+        this(registry, backendNames, name -> true, null, true);
     }
 
     /**
@@ -58,6 +59,16 @@ public final class AvailableCommandsInjector {
             Predicate<String> visible,
             ProxyPlayerEnum playerEnum
     ) {
+        this(registry, backendNames, visible, playerEnum, true);
+    }
+
+    public AvailableCommandsInjector(
+            ProxyCommandRegistry registry,
+            Collection<String> backendNames,
+            Predicate<String> visible,
+            ProxyPlayerEnum playerEnum,
+            boolean enabled
+    ) {
         if (registry == null) {
             throw new IllegalArgumentException("registry cannot be null");
         }
@@ -65,9 +76,17 @@ public final class AvailableCommandsInjector {
         this.backendNames = List.copyOf(backendNames);
         this.visible = visible == null ? name -> true : visible;
         this.playerEnum = playerEnum;
+        this.enabled = enabled;
+    }
+
+    public boolean isEnabled() {
+        return enabled;
     }
 
     public AvailableCommandsPacket inject(AvailableCommandsPacket packet) {
+        if (!enabled) {
+            return packet;
+        }
         // Read the backend's own tree before adding ours, so the free-text type comes from a
         // command this client has already proved it can render.
         CommandParam freeTextType = freeTextParamType(packet);

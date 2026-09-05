@@ -2622,7 +2622,7 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
             if (isCrossProtocol()) {
                 normalizeInitialCrossProtocolStartGame(startGame);
             }
-            StartGameClientFixups fixups = StartGameClientFixups.apply(startGame);
+            StartGameClientFixups fixups = StartGameClientFixups.apply(startGame, commandsInjector.isEnabled());
             if (fixups.forcedTickDeathSystems()) {
                 System.out.printf(
                         "Forced tickDeathSystems=true for backend %s; the backend reported false, "
@@ -2642,7 +2642,7 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
         } else if (packet instanceof ChangeDimensionPacket changeDimension) {
             connection.setPlayerDimensionId(changeDimension.getDimension());
         } else if (packet instanceof SetCommandsEnabledPacket commandsEnabled) {
-            if (!commandsEnabled.isCommandsEnabled()) {
+            if (commandsInjector.isEnabled() && !commandsEnabled.isCommandsEnabled()) {
                 commandsEnabled.setCommandsEnabled(true);
                 System.out.printf("Overrode SetCommandsEnabled=false from backend %s.%n", backendName);
             }
@@ -3378,9 +3378,11 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
     }
 
     private EntityLinkData rewriteLink(EntityLinkData link) {
+        // ActorLink target fields are unique ids, not runtime ids. Rewriting them through the
+        // runtime map corrupts mount state, most visibly when a chest boat opens and mounts at once.
         return new EntityLinkData(
-                toClientRuntime(link.getFrom(), false),
-                toClientRuntime(link.getTo(), false),
+                toClientUnique(link.getFrom()),
+                toClientUnique(link.getTo()),
                 link.getType(),
                 link.isImmediate(),
                 link.isRiderInitiated(),

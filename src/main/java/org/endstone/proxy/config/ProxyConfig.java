@@ -298,6 +298,7 @@ public record ProxyConfig(
         properties.setProperty("permissions.admins", "");
         properties.setProperty("permissions.adminCommands", String.join(",",
                 new java.util.TreeSet<>(PermissionsConfig.DEFAULT_ADMIN_COMMANDS)));
+        properties.setProperty("commands.enabled", "true");
         properties.setProperty("commands.passthrough", "");
         properties.setProperty("commands.qualifier", CommandsConfig.DEFAULT_QUALIFIER);
         SecurityConfig securityDefaults = SecurityConfig.defaults();

@@ -19,10 +19,11 @@ public final class ProxyCommandInterceptor {
     private final ProxyCommandRegistry registry;
     private final Set<String> passthrough;
     private final String qualifier;
+    private final boolean enabled;
 
     /** Keeps every command for the proxy, with the default qualified form still available. */
     public ProxyCommandInterceptor(ProxyCommandRegistry registry) {
-        this(registry, Set.of(), CommandsConfig.DEFAULT_QUALIFIER);
+        this(registry, Set.of(), CommandsConfig.DEFAULT_QUALIFIER, true);
     }
 
     /**
@@ -30,16 +31,33 @@ public final class ProxyCommandInterceptor {
      * @param qualifier   the prefix that forces proxy handling regardless, or empty to disable it
      */
     public ProxyCommandInterceptor(ProxyCommandRegistry registry, Set<String> passthrough, String qualifier) {
+        this(registry, passthrough, qualifier, true);
+    }
+
+    public ProxyCommandInterceptor(
+            ProxyCommandRegistry registry,
+            Set<String> passthrough,
+            String qualifier,
+            boolean enabled
+    ) {
         if (registry == null) {
             throw new IllegalArgumentException("registry cannot be null");
         }
         this.registry = registry;
         this.passthrough = passthrough == null ? Set.of() : Set.copyOf(passthrough);
         this.qualifier = qualifier == null ? "" : qualifier.trim().toLowerCase(Locale.ROOT);
+        this.enabled = enabled;
+    }
+
+    public boolean isEnabled() {
+        return enabled;
     }
 
     public CommandInterception intercept(CommandRequestPacket packet) {
         String commandLine = packet.getCommand();
+        if (!enabled) {
+            return new CommandInterception.Forward(commandLine);
+        }
         String name = ProxyCommandRegistry.commandName(commandLine);
 
         // An empty qualifier disables the qualified form rather than making every command qualified,

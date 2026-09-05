@@ -28,6 +28,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AvailableCommandsInjectorTest {
     @Test
+    void disabledInjectorLeavesTheBackendCommandTreeUntouched() {
+        AvailableCommandsPacket packet = new AvailableCommandsPacket();
+        packet.getCommands().add(vanillaMessageCommand("me", new CommandParam(55)));
+        java.util.List<CommandData> before = java.util.List.copyOf(packet.getCommands());
+
+        new AvailableCommandsInjector(
+                ProxyCommandRegistry.defaults(), List.of("default", "lobby"), name -> true, null, false)
+                .inject(packet);
+
+        assertEquals(before, packet.getCommands());
+    }
+
+    @Test
     void injectsDefaultProxyCommands() {
         AvailableCommandsPacket packet = new AvailableCommandsPacket();
 

@@ -15,6 +15,7 @@ class CommandsConfigTest {
     void keepsEveryCommandForTheProxyByDefault() {
         CommandsConfig config = CommandsConfig.from(new Properties(), List.of("hub", "skygen"));
 
+        assertTrue(config.enabled());
         assertTrue(config.isEmpty());
         assertEquals(Set.of(), config.passthroughFor("hub"));
         assertFalse(config.isPassthrough("hub", "server"));
@@ -90,6 +91,16 @@ class CommandsConfigTest {
         properties.setProperty("commands.qualifier", "");
 
         assertEquals("", CommandsConfig.from(properties, List.of("hub")).qualifier());
+    }
+
+    @Test
+    void canDisableAllProxyCommands() {
+        Properties properties = new Properties();
+        properties.setProperty("commands.enabled", "false");
+
+        CommandsConfig config = CommandsConfig.from(properties, List.of("hub"));
+
+        assertFalse(config.enabled());
     }
 
     @Test

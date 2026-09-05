@@ -63,23 +63,22 @@ final class ClientRelayRuntimeIdTest {
     }
 
     @Test
-    void rewritesTheVehicleAMountedPlayerNamesOntoTheCurrentBackendsId() {
-        // The horse the player is sitting on. The new backend gave it runtime id 1, which is the id
-        // the client already uses for itself, so the proxy had to invent a synthetic client-side id
-        // for it — and from then on the two sides disagree about what "the vehicle" is called.
+    void leavesThePredictedVehiclesUniqueIdAlone() {
+        // The horse has runtime id 1, which collides with the player's persistent runtime id and
+        // therefore gets a synthetic runtime id. Its unique id 500 never changes.
         ProxyConnection connection = connectionAfterSwitch();
-        long clientVehicleId = connection.registerEntityRuntimeMapping(500, CLIENT_ID);
-        assertNotEquals(CLIENT_ID, clientVehicleId,
+        long vehicleUniqueId = 500;
+        long clientVehicleRuntimeId = connection.registerEntityRuntimeMapping(vehicleUniqueId, CLIENT_ID);
+        assertNotEquals(CLIENT_ID, clientVehicleRuntimeId,
                 "the horse must not keep an id the client already spent on itself");
 
         PlayerAuthInputPacket authInput = new PlayerAuthInputPacket();
-        authInput.setPredictedVehicle(clientVehicleId);
+        authInput.setPredictedVehicle(vehicleUniqueId);
 
         new ClientRelayPacketHandler(connection, null, null).normalizePlayerRuntimeId(authInput);
 
-        // Left alone this names an entity the backend has never heard of, and the mount silently
-        // ignores every input the player gives it.
-        assertEquals(CLIENT_ID, authInput.getPredictedVehicle());
+        // Rewriting this through the runtime map would corrupt it into an unrelated actor id.
+        assertEquals(vehicleUniqueId, authInput.getPredictedVehicle());
     }
 
     @Test

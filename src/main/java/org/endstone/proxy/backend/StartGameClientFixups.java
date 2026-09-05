@@ -33,6 +33,10 @@ record StartGameClientFixups(
     private static final boolean DISABLED = Boolean.getBoolean("proxy.noStartGameFixups");
 
     static StartGameClientFixups apply(StartGamePacket startGame) {
+        return apply(startGame, true);
+    }
+
+    static StartGameClientFixups apply(StartGamePacket startGame, boolean proxyCommandsEnabled) {
         if (DISABLED) {
             return new StartGameClientFixups(false, false);
         }
@@ -50,7 +54,7 @@ record StartGameClientFixups(
         // which any permission level can see. Per-player operator status is synchronized separately
         // from the backend's UpdateAbilities command permission.
 
-        boolean enabledCommands = !startGame.isCommandsEnabled();
+        boolean enabledCommands = proxyCommandsEnabled && !startGame.isCommandsEnabled();
         if (enabledCommands) {
             startGame.setCommandsEnabled(true);
         }

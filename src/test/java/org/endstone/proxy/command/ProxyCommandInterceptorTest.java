@@ -94,6 +94,17 @@ class ProxyCommandInterceptorTest {
         assertInstanceOf(CommandInterception.Consumed.class, interceptor.intercept(command("/lobby")));
     }
 
+    @Test
+    void disabledInterceptorForwardsBareAndQualifiedProxyCommands() {
+        ProxyCommandInterceptor interceptor = new ProxyCommandInterceptor(
+                ProxyCommandRegistry.defaults(), Set.of(), CommandsConfig.DEFAULT_QUALIFIER, false);
+
+        assertInstanceOf(CommandInterception.Forward.class, interceptor.intercept(command("/server skygen")));
+        assertInstanceOf(CommandInterception.Forward.class, interceptor.intercept(command("/hub")));
+        assertInstanceOf(CommandInterception.Forward.class, interceptor.intercept(command("/proxy:server skygen")));
+        assertInstanceOf(CommandInterception.Forward.class, interceptor.intercept(command("/proxy:hub")));
+    }
+
     private static ProxyCommandInterceptor passthrough(String... commands) {
         return new ProxyCommandInterceptor(
                 ProxyCommandRegistry.defaults(),

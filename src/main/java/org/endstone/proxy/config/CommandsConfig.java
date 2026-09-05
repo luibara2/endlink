@@ -36,6 +36,7 @@ import java.util.Set;
  * who may not run {@code /alert}. The prefix decides <em>who handles the command</em>, never who may
  * run it.</p>
  *
+ * @param enabled            whether Endlink advertises and handles any proxy commands
  * @param passthrough        names every backend keeps, for backends with no list of their own
  * @param backendPassthrough per-backend lists, which replace {@code passthrough} rather than adding
  *                           to it — the same "an explicit value wins outright" rule as
@@ -43,6 +44,7 @@ import java.util.Set;
  * @param qualifier          the prefix that forces proxy handling, or empty to disable it
  */
 public record CommandsConfig(
+        boolean enabled,
         Set<String> passthrough,
         Map<String, Set<String>> backendPassthrough,
         String qualifier
@@ -62,10 +64,13 @@ public record CommandsConfig(
 
     /** The proxy keeps every name on every backend, and the qualified form is available. */
     public static CommandsConfig defaults() {
-        return new CommandsConfig(Set.of(), Map.of(), DEFAULT_QUALIFIER);
+        return new CommandsConfig(true, Set.of(), Map.of(), DEFAULT_QUALIFIER);
     }
 
     public static CommandsConfig from(Properties properties, Collection<String> backendNames) {
+        boolean enabled = !properties.containsKey("commands.enabled")
+                || Boolean.parseBoolean(ConfigValues.stripInlineComment(
+                        properties.getProperty("commands.enabled")));
         Set<String> passthrough = properties.containsKey("commands.passthrough")
                 ? new LinkedHashSet<>(ConfigValues.commaList(
                         properties.getProperty("commands.passthrough"), "commands.passthrough"))
@@ -87,7 +92,7 @@ public record CommandsConfig(
         String qualifier = properties.containsKey("commands.qualifier")
                 ? ConfigValues.stripInlineComment(properties.getProperty("commands.qualifier"))
                 : DEFAULT_QUALIFIER;
-        return new CommandsConfig(passthrough, backendPassthrough, qualifier);
+        return new CommandsConfig(enabled, passthrough, backendPassthrough, qualifier);
     }
 
     /** The names this backend keeps for itself. */

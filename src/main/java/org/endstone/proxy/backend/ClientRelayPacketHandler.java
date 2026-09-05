@@ -1,5 +1,6 @@
 package org.endstone.proxy.backend;
 
+import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.util.ReferenceCountUtil;
 import java.util.ArrayList;
@@ -25,6 +26,7 @@ import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action
 import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.SwapAction;
 import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.TransferItemStackRequestAction;
 import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.ItemUseTransaction;
+import org.cloudburstmc.protocol.bedrock.netty.BedrockPacketWrapper;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket;
 import org.cloudburstmc.protocol.bedrock.packet.UnknownPacket;
@@ -331,7 +333,7 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
             if (connection.isPacketTraceActive()) {
                 logCommandRequest(commandRequest);
             }
-            if (isClientSideCommandPreview(commandRequest)) {
+            if (commandInterceptor.isEnabled() && isClientSideCommandPreview(commandRequest)) {
                 System.out.printf(
                         "Suppressing client-side command preview from %s: %s%n",
                         connection.client().getSocketAddress(),
@@ -357,8 +359,83 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
             return PacketSignal.HANDLED;
         }
 
+        if (packet instanceof ItemStackRequestPacket
+                && relayOriginalItemStackRequest(connection.backend(), traceSequence)) {
+            return PacketSignal.HANDLED;
+        }
+
         sendToBackend(connection.backend(), packet, traceSequence);
         return PacketSignal.HANDLED;
+    }
+
+    /**
+     * Relays an inventory stack request byte-for-byte when both endpoints use the same wire format.
+     *
+     * <p>These requests refer to slots and stack-network ids, so they need no entity or item-palette
+     * translation. Decoding and rebuilding one only creates an opportunity to lose a field that is
+     * meaningful for less common items (for example, dropping a bucket containing an axolotl). The
+     * normal translated path remains the fallback for genuinely different protocol formats.</p>
+     */
+    private boolean relayOriginalItemStackRequest(BackendSession backend, long traceSequence) {
+        if (backend == null || connection.sessionProfile() == null) {
+            return false;
+        }
+        int clientProtocol = connection.sessionProfile().clientCodec().getProtocolVersion();
+        int backendProtocol = connection.sessionProfile().backendCodec().getProtocolVersion();
+        if (!CanonicalProtocol.sharesWireFormat(clientProtocol, backendProtocol)) {
+            return false;
+        }
+
+        int clientPacketId = connection.sessionProfile().clientCodec()
+                .getPacketDefinition(ItemStackRequestPacket.class)
+                .getId();
+        int backendPacketId = connection.sessionProfile().backendCodec()
+                .getPacketDefinition(ItemStackRequestPacket.class)
+                .getId();
+        if (clientPacketId != backendPacketId) {
+            return false;
+        }
+
+        UnknownPacket rawRequest = copyOriginalPayload(
+                connection.client().currentInboundPacket(),
+                clientPacketId
+        );
+        if (rawRequest == null) {
+            return false;
+        }
+
+        backend.sendPacket(rawRequest);
+        if (traceSequence >= 0 && connection.isPacketTraceActive()) {
+            System.out.printf(
+                    "Forwarded serverbound #%d +%dms to backend %s original=ItemStackRequestPacket "
+                            + "translated=unchanged-wire-payload clientConnected=%s backendConnected=%s.%n",
+                    traceSequence,
+                    connection.elapsedMillis(),
+                    connection.backendName(),
+                    connection.client().isConnected(),
+                    backend.isConnected()
+            );
+        }
+        return true;
+    }
+
+    static UnknownPacket copyOriginalPayload(BedrockPacketWrapper inbound, int expectedPacketId) {
+        if (inbound == null || inbound.getPacketId() != expectedPacketId) {
+            return null;
+        }
+        ByteBuf packetBuffer = inbound.getPacketBuffer();
+        int headerLength = inbound.getHeaderLength();
+        if (packetBuffer == null || headerLength < 0 || headerLength > packetBuffer.readableBytes()) {
+            return null;
+        }
+
+        UnknownPacket rawRequest = new UnknownPacket();
+        rawRequest.setPacketId(expectedPacketId);
+        rawRequest.setPayload(packetBuffer.retainedSlice(
+                packetBuffer.readerIndex() + headerLength,
+                packetBuffer.readableBytes() - headerLength
+        ));
+        return rawRequest;
     }
 
     private static boolean isInitialModernJoinReadyTrigger(BedrockPacket packet) {
@@ -679,20 +756,6 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
             }
         } else if (packet instanceof InventoryTransactionPacket transaction) {
             transaction.setRuntimeEntityId(connection.toBackendRuntimeEntityId(transaction.getRuntimeEntityId()));
-        } else if (packet instanceof PlayerAuthInputPacket authInput) {
-            // The vehicle the client believes it is riding, named by runtime id. A mounted client
-            // repeats this on every input tick and the backend steers the vehicle from it, so an
-            // id the backend does not recognise means the mount takes no input at all: the player
-            // sits on it and it will not move, turn or dismount cleanly.
-            //
-            // This hid behind the id mapping being an identity on the first backend. Nothing
-            // collides there, toBackendRuntimeEntityId returns its argument, and the missing
-            // rewrite is invisible. After a switch the client keeps its original id while the new
-            // backend issues its own, toClientRuntimeEntityId starts handing out synthetic ids,
-            // and only then does the unrewritten field name the wrong entity — which is why this
-            // reads as "riding works on server1 and not on server2".
-            authInput.setPredictedVehicle(
-                    connection.toBackendRuntimeEntityId(authInput.getPredictedVehicle()));
         } else if (packet instanceof MovePlayerPacket movePlayer) {
             // The pre-server-authoritative spelling of the same thing, still sent by older clients
             // reaching a modern backend through a translator. Its clientbound counterpart is
@@ -702,6 +765,8 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
             movePlayer.setRidingRuntimeEntityId(
                     connection.toBackendRuntimeEntityId(movePlayer.getRidingRuntimeEntityId()));
         }
+        // PlayerAuthInput.predictedVehicle is intentionally absent. It is an ActorUniqueID, so
+        // applying the runtime-id map can turn a valid vehicle into an unrelated actor.
     }
 
     private java.util.Set<PlayerAuthInputData> lastLoggedInputData;

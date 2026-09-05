@@ -289,7 +289,7 @@ public final class BedrockProxyListener {
                 org.endstone.proxy.backend.BackendRelayPacketHandler.diagnosticSuppressionSummary(),
                 org.endstone.proxy.backend.ClientRelayPacketHandler.movementSampleSummary()
         );
-        if (config.permissions().admins().isEmpty()) {
+        if (config.commands().enabled() && config.permissions().admins().isEmpty()) {
             System.out.println("No proxy administrators configured; /"
                     + String.join(", /", new java.util.TreeSet<>(config.permissions().adminCommands()))
                     + " are unavailable to everyone. Set permissions.admins to your XUID to use them.");
@@ -300,7 +300,9 @@ public final class BedrockProxyListener {
         }
         // A command the proxy has given away answers differently depending on where the player is
         // standing, which is impossible to diagnose from a bug report. Say so once at startup.
-        if (!config.commands().isEmpty()) {
+        if (!config.commands().enabled()) {
+            System.out.println("Proxy commands are disabled; Endlink will neither advertise nor handle them.");
+        } else if (!config.commands().isEmpty()) {
             for (String backendName : config.backends().values().stream()
                     .map(org.endstone.proxy.config.BackendConfig::name)
                     .toList()) {
