@@ -98,6 +98,10 @@ public class TextSerializer_v924 extends TextSerializer_v898 {
     public void deserialize(ByteBuf buffer, BedrockCodecHelper helper, TextPacket packet) {
         TextConverter converter = helper.getTextConverter();
         boolean needsTranslation = buffer.readBoolean();
+        // v898 kept this and v924 lost it. Without it a relay re-encodes every translated line with
+        // the flag cleared (the default converter has no opinion), and the client prints the raw key:
+        // "%multiplayer.player.joined" instead of "<name> joined the game".
+        packet.setNeedsTranslation(needsTranslation);
 
         switch (buffer.readByte()) {
             case 0: // MessageOnly

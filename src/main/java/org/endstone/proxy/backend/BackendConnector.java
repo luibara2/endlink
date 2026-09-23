@@ -194,21 +194,67 @@ public final class BackendConnector {
     /**
      * Whether this player can only reach a backend by reconnecting.
      *
-     * <p>A Bedrock client fixes its block-id scheme from the StartGame it logged in with and cannot
-     * be told otherwise while it is playing, so a seamless handoff to a backend on the other scheme
-     * delivers chunks the client cannot decode: the player stands in an empty or scrambled world.
-     * Backends that hash block ids (every Bedrock server) and ones that number them by palette order
-     * (a Geyser instance fronting a Java server) are the two schemes in practice.</p>
+     * <p>A Bedrock client fixes some of how it reads the world from the session itself, and cannot be
+     * told otherwise while it is playing. A seamless handoff to a backend that disagrees delivers a
+     * world the client cannot use. Two such facts are known, see {@link #reconnectReason}.</p>
      *
      * <p>Answered false while either side is unknown. Guessing "reconnect" for an unvisited backend
      * would put a loading screen in front of the ordinary same-scheme switch that makes up almost
-     * every move on a network; the scheme is learned from the first StartGame and persisted, so the
-     * uncertainty lasts one visit rather than one restart.</p>
+     * every move on a network; both facts are learned from a backend's first visit and persisted, so
+     * the uncertainty lasts one visit rather than one restart.</p>
      */
     public boolean needsReconnectToReach(ProxyConnection connection, BackendConfig backend) {
-        Boolean clientHashed = connection.clientBlockIdsHashed();
-        Boolean backendHashed = paletteStore == null ? null : paletteStore.blockIdsHashed(backend.name());
-        return clientHashed != null && backendHashed != null && clientHashed != backendHashed;
+        return reconnectReason(connection, backend) != null;
+    }
+
+    /**
+     * Why a seamless handoff to this backend cannot work for this player, or null if it can.
+     *
+     * <ul>
+     *   <li><b>Block-id scheme.</b> The client reads it from the StartGame it logged in with. Backends
+     *   that hash block ids (every Bedrock server) and ones that number them by palette order (a
+     *   Geyser instance fronting a Java server) are the two schemes in practice; on the wrong one the
+     *   player stands in an empty or scrambled world.</li>
+     *   <li><b>Sub-chunk requests.</b> A client that a BDS backend has put into request mode keeps it
+     *   for the session, and on arrival at a backend that sends whole chunks - PowerNukkitX, Geyser -
+     *   it asks for the sub-chunks around the player and waits on "Building terrain" for answers that
+     *   never come. The reverse is harmless: a request-mode backend announces the mode itself.</li>
+     * </ul>
+     */
+    public String reconnectReason(ProxyConnection connection, BackendConfig backend) {
+        return reconnectReason(
+                connection.clientBlockIdsHashed(),
+                paletteStore == null ? null : paletteStore.blockIdsHashed(backend.name()),
+                connection.clientRequestsSubChunks(),
+                sendsOnlyWholeChunks(backend)
+        );
+    }
+
+    static String reconnectReason(
+            Boolean clientHashed,
+            Boolean backendHashed,
+            boolean clientRequestsSubChunks,
+            boolean backendSendsOnlyWholeChunks
+    ) {
+        if (clientHashed != null && backendHashed != null && !clientHashed.equals(backendHashed)) {
+            return "it numbers block ids differently to the world they logged into";
+        }
+        if (clientRequestsSubChunks && backendSendsOnlyWholeChunks) {
+            return "it sends whole chunks, and their client is in sub-chunk request mode";
+        }
+        return null;
+    }
+
+    /**
+     * True when the backend is known not to serve sub-chunk requests: said so in the config, or seen
+     * sending whole chunks. False while it has never sent one.
+     */
+    private boolean sendsOnlyWholeChunks(BackendConfig backend) {
+        if (backend.dropSubChunkRequests()) {
+            return true;
+        }
+        Boolean requests = paletteStore == null ? null : paletteStore.subChunkRequests(backend.name());
+        return requests != null && !requests;
     }
 
     /**
@@ -233,13 +279,14 @@ public final class BackendConnector {
         }
 
         reconnectRoutes.remember(connection.clientLogin().authData().xuid(), backend.name());
+        String reason = reconnectReason(connection, backend);
         System.out.printf(
-                "Sending %s to %s by reconnect via %s:%d (it numbers block ids differently to the world"
-                        + " they logged into).%n",
+                "Sending %s to %s by reconnect via %s:%d (%s).%n",
                 connection.clientLogin().authData().displayName(),
                 backend.name(),
                 target.host(),
-                target.port()
+                target.port(),
+                reason == null ? "asked for" : reason
         );
         sendMessage(connection, "Taking you to " + backend.name() + "...");
 
@@ -279,7 +326,11 @@ public final class BackendConnector {
     /** False while the backend has never been seen, so the config key remains the way to say so. */
     private boolean doesNotImplementSubChunks(BackendConfig backend) {
         Boolean hashed = paletteStore == null ? null : paletteStore.blockIdsHashed(backend.name());
-        return hashed != null && !hashed;
+        if (hashed != null && !hashed) {
+            return true;
+        }
+        Boolean requests = paletteStore == null ? null : paletteStore.subChunkRequests(backend.name());
+        return requests != null && !requests;
     }
 
     /**

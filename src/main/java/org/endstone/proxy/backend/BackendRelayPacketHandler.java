@@ -187,6 +187,8 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
     // Set when we drive a cross-protocol death respawn handshake (CLIENT_READY) so we only do it
     // once per death; cleared when the backend confirms the respawn with SERVER_READY.
     private boolean deathRespawnHandshakeDriven;
+    // One chunk per backend session is enough to learn its terrain mode; see learnChunkMode.
+    private boolean chunkModeLearned;
     // Set once this backend's kick has been claimed by failover. Its socket stays open for a short
     // while afterwards, and anything else it sends in that window belongs to a world the player is
     // already leaving.
@@ -626,6 +628,9 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
             );
             logClientboundDetails(packet);
         }
+        if (packet instanceof LevelChunkPacket chunk) {
+            learnChunkMode(chunk);
+        }
         flushPendingInitialClientboundIfReady();
         int sourceDimension = connection.playerDimensionId();
         if (pendingStartGame) {
@@ -779,22 +784,9 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
         BackendSwitchReset switchReset = connection.backendSwitchReset();
         if (!pendingStartGame
                 && switchReset != null
-                && switchReset.isActive()
                 && backend == connection.backend()
-                && suppressWorldStateDuringSwitchReset(packet)) {
-            if (packet instanceof RespawnPacket respawn) {
-                acknowledgeRespawn(respawn);
-            }
-            captureSwitchResetPlayerState(packet);
-            boolean deferred = captureSwitchResetWorldState(packet);
-            if (connection.isPacketTraceActive()) {
-                System.out.printf(
-                        "%s clientbound packet from backend %s during switch reset: %s.%n",
-                        deferred ? "Deferring" : "Suppressing",
-                        backendName,
-                        packet.getClass().getSimpleName()
-                );
-            }
+                && suppressWorldStateDuringSwitchReset(packet)
+                && captureDuringSwitchReset(switchReset, packet)) {
             return PacketSignal.HANDLED;
         }
         if (suppressInitialCrossProtocolEntitySpawn(packet, traceSequence)) {
@@ -1334,6 +1326,96 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
             );
         }
         return new SyntheticClientCachedChunk(shell, false);
+    }
+
+    /**
+     * Learns how this backend delivers terrain, and whether the client has been put into sub-chunk
+     * request mode, from the chunks it sends.
+     *
+     * <p>Both decide whether a later switch can be seamless: a client in request mode cannot be handed
+     * to a backend that only sends whole chunks. See {@link BackendConnector#needsReconnectToReach}.
+     * Only the first chunk of each backend session is learned from; a backend does not change mode
+     * mid-session, and this runs for every chunk of every player.</p>
+     */
+    private void learnChunkMode(LevelChunkPacket chunk) {
+        if (chunk.isRequestSubChunks()) {
+            connection.rememberClientRequestsSubChunks();
+        }
+        if (chunkModeLearned) {
+            return;
+        }
+        chunkModeLearned = true;
+        if (connection.crossBackendPalette().store().learnSubChunkRequests(backendName, chunk.isRequestSubChunks())) {
+            System.out.printf(
+                    "Backend %s %s.%n",
+                    backendName,
+                    chunk.isRequestSubChunks()
+                            ? "has clients request terrain a sub-chunk at a time"
+                            : "sends whole chunks and does not answer sub-chunk requests; players already in "
+                                    + "sub-chunk mode will reach it by reconnect"
+            );
+        }
+    }
+
+    /**
+     * Holds back a packet that arrived while the switch reset is bouncing the client through its
+     * dimension changes.
+     *
+     * <p>The check and the capture happen under the reset's lock, the same lock
+     * {@link BackendSwitchReset} completes and drains its replay buffers under. Without it a chunk
+     * that arrived in the instant between the drain and the phase flipping to complete was captured
+     * into a buffer nobody would drain again: a hole in the terrain the backend never refills,
+     * because it counts that chunk as delivered.
+     *
+     * @return false when the reset had already completed, so the caller forwards the packet normally
+     */
+    private boolean captureDuringSwitchReset(BackendSwitchReset switchReset, BedrockPacket packet) {
+        synchronized (switchReset) {
+            if (!switchReset.isActive()) {
+                return false;
+            }
+            if (packet instanceof RespawnPacket respawn) {
+                acknowledgeRespawn(respawn);
+            }
+            rememberSwitchResetPlayerPosition(switchReset, packet);
+            captureSwitchResetPlayerState(packet);
+            boolean deferred = captureSwitchResetWorldState(packet);
+            if (connection.isPacketTraceActive()) {
+                System.out.printf(
+                        "%s clientbound packet from backend %s during switch reset: %s.%n",
+                        deferred ? "Deferring" : "Suppressing",
+                        backendName,
+                        packet.getClass().getSimpleName()
+                );
+            }
+            return true;
+        }
+    }
+
+    /**
+     * Keeps where the backend says the local player is, from packets the reset would otherwise drop.
+     *
+     * <p>StartGame's position is not always a real one. PowerNukkitX, like vanilla, gives a player
+     * with no saved position a staging point at y=32768 and only places them with the respawn
+     * handshake and a teleport once their spawn is known. A backend with a small, cheap world does
+     * all of that inside the reset window, so the reset used to land the client at the staging point
+     * instead - above the build limit, where it waits on "Building terrain" for chunks that cannot
+     * exist - while the backend believed it had already put the player on the ground.</p>
+     */
+    private void rememberSwitchResetPlayerPosition(BackendSwitchReset switchReset, BedrockPacket packet) {
+        if (packet instanceof RespawnPacket respawn
+                && respawn.getState() == RespawnPacket.State.SERVER_READY
+                && respawn.getPosition() != null) {
+            switchReset.rememberBackendPosition(connection, respawn.getPosition(), null, "respawn");
+            return;
+        }
+        long playerRuntimeEntityId = connection.backendPlayerRuntimeEntityId();
+        if (packet instanceof MovePlayerPacket move
+                && playerRuntimeEntityId > 0
+                && move.getRuntimeEntityId() == playerRuntimeEntityId
+                && move.getPosition() != null) {
+            switchReset.rememberBackendPosition(connection, move.getPosition(), move.getRotation(), "move");
+        }
     }
 
     private static boolean suppressWorldStateDuringSwitchReset(BedrockPacket packet) {

@@ -353,6 +353,23 @@ final class CrossBackendPaletteTest {
         assertEquals(1, skygen.entityProperties().size());
     }
 
+    @Test
+    void howABackendDeliversTerrainIsRememberedForTheNextRestart(@TempDir Path dir) {
+        Path cacheFile = dir.resolve("palettes.nbt");
+        BackendPaletteStore store = BackendPaletteStore.load(cacheFile);
+        assertNull(store.subChunkRequests("skygen"), "never seen is not the same as whole chunks");
+
+        assertTrue(store.learnSubChunkRequests("skygen", false));
+        assertTrue(store.learnSubChunkRequests("hub", true));
+        assertFalse(store.learnSubChunkRequests("skygen", false), "a repeat is not news");
+        store.flush();
+
+        BackendPaletteStore reloaded = BackendPaletteStore.load(cacheFile);
+        assertEquals(Boolean.FALSE, reloaded.subChunkRequests("skygen"));
+        assertEquals(Boolean.TRUE, reloaded.subChunkRequests("hub"));
+        assertNull(reloaded.subChunkRequests("tntrun"));
+    }
+
     /**
      * Learning must cost nothing on disk while it happens.
      *

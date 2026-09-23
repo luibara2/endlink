@@ -58,6 +58,7 @@ public final class BackendPaletteStore {
     private static final String ENTITY_PROPERTIES = "entityProperties";
     private static final String BLOCK_PROPERTIES = "blockProperties";
     private static final String BLOCK_IDS_HASHED = "blockIdsHashed";
+    private static final String SUB_CHUNK_REQUESTS = "subChunkRequests";
     private static final String BLOCK_PROPERTIES_DATA = "data";
     private static final String NAME = "name";
     private static final String RUNTIME_ID = "id";
@@ -207,6 +208,29 @@ public final class BackendPaletteStore {
         palettes.put(backendName, existing.withBlockIdsHashed(blockIdsHashed));
         markDirty();
         return true;
+    }
+
+    /**
+     * Records whether a backend has clients request its terrain a sub-chunk at a time. Learned for
+     * every backend, like {@link #learnBlockIdsHashed}. See {@link BackendPalette#withSubChunkRequests}.
+     */
+    public synchronized boolean learnSubChunkRequests(String backendName, boolean subChunkRequests) {
+        if (!enabled || backendName == null) {
+            return false;
+        }
+        BackendPalette existing = palettes.getOrDefault(backendName, BackendPalette.empty(backendName));
+        if (existing.subChunkRequests() != null && existing.subChunkRequests() == subChunkRequests) {
+            return false;
+        }
+        palettes.put(backendName, existing.withSubChunkRequests(subChunkRequests));
+        markDirty();
+        return true;
+    }
+
+    /** Whether the named backend uses sub-chunk requests, or null if it has never sent a chunk. */
+    public synchronized Boolean subChunkRequests(String backendName) {
+        BackendPalette palette = backendName == null ? null : palettes.get(backendName);
+        return palette == null ? null : palette.subChunkRequests();
     }
 
     /** Whether the named backend hashes block ids, or null if it has never been seen. */
@@ -368,6 +392,9 @@ public final class BackendPaletteStore {
             if (palette.blockIdsHashed() != null) {
                 backend.putBoolean(BLOCK_IDS_HASHED, palette.blockIdsHashed());
             }
+            if (palette.subChunkRequests() != null) {
+                backend.putBoolean(SUB_CHUNK_REQUESTS, palette.subChunkRequests());
+            }
             if (palette.entityIdentifiers() != null) {
                 backend.putCompound(ENTITY_IDENTIFIERS, palette.entityIdentifiers());
             }
@@ -411,7 +438,8 @@ public final class BackendPaletteStore {
                     backend.containsKey(ENTITY_IDENTIFIERS) ? backend.getCompound(ENTITY_IDENTIFIERS) : null,
                     backend.getList(ENTITY_PROPERTIES, NbtType.COMPOUND, List.of()),
                     blocks,
-                    backend.containsKey(BLOCK_IDS_HASHED) ? backend.getBoolean(BLOCK_IDS_HASHED) : null
+                    backend.containsKey(BLOCK_IDS_HASHED) ? backend.getBoolean(BLOCK_IDS_HASHED) : null,
+                    backend.containsKey(SUB_CHUNK_REQUESTS) ? backend.getBoolean(SUB_CHUNK_REQUESTS) : null
             ));
         }
     }

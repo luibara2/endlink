@@ -47,8 +47,9 @@ public final class BackendSwitchReset {
     private final long backendRuntimeEntityId;
     private final long clientRuntimeEntityId;
     private final int targetDimension;
-    private final Vector3f targetPosition;
-    private final Vector2f targetRotation;
+    // Start from StartGame's and move with the backend: see rememberBackendPosition.
+    private Vector3f targetPosition;
+    private Vector2f targetRotation;
     private final boolean secondDimensionChangeRequired;
     private final BackendSwitchInputState inputState;
 
@@ -141,6 +142,36 @@ public final class BackendSwitchReset {
     public synchronized void rememberTargetInputLocks(int lockComponentData) {
         if (phase != Phase.COMPLETE) {
             inputState.rememberTarget(lockComponentData);
+        }
+    }
+
+    /**
+     * Moves the target to where the backend has since placed the player.
+     *
+     * <p>StartGame's position can be a placeholder: PowerNukkitX (and vanilla) give a player with no
+     * saved position a staging point at y=32768, then send the real spawn in {@code Respawn(SERVER_READY)}
+     * and a teleport. When that happens while the client is still being bounced, those packets are
+     * suppressed like the rest of the world state, so the reset has to carry the position itself or
+     * it lands the client at the staging point, above the build limit, stuck on "Building terrain".</p>
+     *
+     * @param rotation pitch, yaw, head yaw as a MovePlayer carries them, or null to keep the rotation
+     */
+    public synchronized void rememberBackendPosition(
+            ProxyConnection connection, Vector3f position, Vector3f rotation, String source) {
+        if (phase == Phase.COMPLETE) {
+            return;
+        }
+        targetPosition = position;
+        if (rotation != null) {
+            targetRotation = Vector2f.from(rotation.getX(), rotation.getY());
+        }
+        if (connection.isPacketTraceActive()) {
+            System.out.printf(
+                    "Backend %s placed the player during the switch reset (%s): target position now %s.%n",
+                    backendName,
+                    source,
+                    position
+            );
         }
     }
 

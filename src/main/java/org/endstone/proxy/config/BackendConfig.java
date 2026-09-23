@@ -17,17 +17,17 @@ import java.net.InetSocketAddress;
  *                 (2168 is 1.26.40 through 1.26.44) and they do not all share a wire format, so
  *                 the codec's own name for a protocol must never be read back as the release.
  *                 See {@link org.endstone.proxy.protocol.BedrockRelease}.
- * @param dropSubChunkRequests stop forwarding the client's {@code SubChunkRequestPacket} to this
- *                 backend, set with {@code backend.<name>.dropSubChunkRequests=true}.
+ * @param dropSubChunkRequests mark this backend as not serving sub-chunk requests, set with
+ *                 {@code backend.<name>.dropSubChunkRequests=true}.
  *                 <p>A Bedrock client asks for terrain one sub-chunk at a time only because a server
  *                 told it to, and BDS does. That mode belongs to the client's session rather than to
- *                 one backend, so it survives a switch — and the proxy's handoff is deliberately
- *                 seamless, so the client is never told the new server works differently. A backend
- *                 that does not implement the sub-chunk system then receives requests it never
- *                 advertised. Geyser treats them as a protocol violation and drops the player.
- *                 <p>Off by default: every Bedrock server implements this, and silently withholding
- *                 the requests from one that does would leave terrain unloaded. Turn it on only for
- *                 a backend that is not really a Bedrock server.
+ *                 one backend, so it survives a switch. A backend that sends whole chunks instead -
+ *                 PowerNukkitX, Geyser - never answers the requests: the player waits on "Building
+ *                 terrain", and Geyser drops them for a protocol violation. Such a backend is reached
+ *                 by reconnect for a client in request mode, and the requests are not forwarded to it.
+ *                 <p>Normally learned from the backend's first chunk and persisted, so this is only
+ *                 needed for a backend nobody has visited since the cache was cleared. Off by default:
+ *                 withholding the requests from a backend that does serve them leaves terrain unloaded.
  */
 public record BackendConfig(
         String name,

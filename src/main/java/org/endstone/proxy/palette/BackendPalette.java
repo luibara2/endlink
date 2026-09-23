@@ -22,7 +22,8 @@ public record BackendPalette(
         NbtMap entityIdentifiers,
         List<NbtMap> entityProperties,
         List<BlockPropertyData> blockProperties,
-        Boolean blockIdsHashed
+        Boolean blockIdsHashed,
+        Boolean subChunkRequests
 ) {
     public BackendPalette {
         items = items == null ? List.of() : List.copyOf(items);
@@ -31,15 +32,15 @@ public record BackendPalette(
     }
 
     public static BackendPalette empty(String backendName) {
-        return new BackendPalette(backendName, List.of(), null, List.of(), List.of(), null);
+        return new BackendPalette(backendName, List.of(), null, List.of(), List.of(), null, null);
     }
 
     public BackendPalette withItems(List<ItemDefinition> items) {
-        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties, blockIdsHashed);
+        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties, blockIdsHashed, subChunkRequests);
     }
 
     public BackendPalette withEntityIdentifiers(NbtMap entityIdentifiers) {
-        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties, blockIdsHashed);
+        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties, blockIdsHashed, subChunkRequests);
     }
 
     /**
@@ -52,7 +53,23 @@ public record BackendPalette(
      * player to move after a restart cannot be the one who discovers it.</p>
      */
     public BackendPalette withBlockIdsHashed(boolean blockIdsHashed) {
-        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties, blockIdsHashed);
+        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties, blockIdsHashed, subChunkRequests);
+    }
+
+    /**
+     * Whether this backend asks clients to request terrain a sub-chunk at a time, or null while it has
+     * never sent a chunk.
+     *
+     * <p>The second fact that decides whether a handoff can be seamless. BDS announces its chunks with
+     * {@code requestSubChunks} and serves the {@code SubChunkRequest}s that follow; PowerNukkitX and
+     * Geyser send every chunk whole and never answer one. A client learns request mode from the first
+     * backend that uses it and keeps it for the whole session, so after a seamless switch to a
+     * whole-chunk backend it asks for the sub-chunks around the player, waits on "Building terrain"
+     * for answers that never come, and renders nothing. Persisted for the same reason as
+     * {@link #withBlockIdsHashed}: the switch has to be decided before it happens.</p>
+     */
+    public BackendPalette withSubChunkRequests(boolean subChunkRequests) {
+        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties, blockIdsHashed, subChunkRequests);
     }
 
     /**
@@ -61,7 +78,7 @@ public record BackendPalette(
      * correct its runtime id is.
      */
     public BackendPalette withBlockProperties(List<BlockPropertyData> blockProperties) {
-        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties, blockIdsHashed);
+        return new BackendPalette(backendName, items, entityIdentifiers, entityProperties, blockProperties, blockIdsHashed, subChunkRequests);
     }
 
     /** Adds one entity property list, replacing any earlier list for the same entity type. */
@@ -77,7 +94,7 @@ public record BackendPalette(
             }
         }
         merged.add(property);
-        return new BackendPalette(backendName, items, entityIdentifiers, merged, blockProperties, blockIdsHashed);
+        return new BackendPalette(backendName, items, entityIdentifiers, merged, blockProperties, blockIdsHashed, subChunkRequests);
     }
 
     public boolean isEmpty() {

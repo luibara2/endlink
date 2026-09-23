@@ -46,6 +46,7 @@ public final class ProxyConnection {
     private final BackendPackCache backendPackCache;
     private final CrossBackendPalette crossBackendPalette;
     private Boolean clientBlockIdsHashed;
+    private boolean clientRequestsSubChunks;
     private final ClientWorldState clientWorldState = new ClientWorldState();
     private BackendSession backend;
     private String backendName;
@@ -262,6 +263,22 @@ public final class ProxyConnection {
         if (clientBlockIdsHashed == null) {
             clientBlockIdsHashed = hashed;
         }
+    }
+
+    /**
+     * Whether a backend has put this client into sub-chunk request mode.
+     *
+     * <p>Set by the first chunk announced with {@code requestSubChunks}, and never cleared: the
+     * client keeps the mode for the rest of the session whichever backend it is on. A seamless switch
+     * to a backend that sends whole chunks and never answers a {@code SubChunkRequest} then strands
+     * the player on "Building terrain", so such a backend has to be reached by a reconnect.</p>
+     */
+    public synchronized boolean clientRequestsSubChunks() {
+        return clientRequestsSubChunks;
+    }
+
+    public synchronized void rememberClientRequestsSubChunks() {
+        clientRequestsSubChunks = true;
     }
 
     public synchronized BackendSession backend() {
