@@ -24,7 +24,17 @@ On first start it writes a fully documented `config.properties` and creates a `p
 > join, play, and switch between backends keeping their session, identity and permissions. That has
 > run a live server at around ten concurrent players.
 >
-> **New in v0.5.2: the protocol number 1.26.50 actually shipped with.** v0.5.1 was built against
+> **New in v0.5.3: PowerNukkitX backends, played on.** A player who met a BDS or Endstone backend
+> first and then switched to a PowerNukkitX one sat on *Building terrain* for good, or fell through
+> an empty world. BDS has the client request terrain a sub-chunk at a time and the client keeps that
+> mode for the session; PowerNukkitX sends whole chunks and never answers the requests. Endlink now
+> learns which kind each backend is from its first chunk and reaches a whole-chunk backend by
+> reconnect, the same way it already reaches a Java server through Geyser. Also fixed: translated
+> chat from any backend arriving as raw keys (*%multiplayer.player.joined*), new players landing at
+> a backend's y=32768 staging point after a switch, and a chunk occasionally lost at the end of one.
+> Tested with a real 1.26.51 client against a PowerNukkitX 3.0.5 server behind an Endstone hub.
+>
+> **In v0.5.2: the protocol number 1.26.50 actually shipped with.** v0.5.1 was built against
 > Preview 26.50.27, which asks for **2192**. The stable release renumbered to **2193** on the way
 > out, so v0.5.1 refused every real 1.26.50 and 1.26.51 player at the door with *client protocol
 > 2193, proxy speaks up to 2192*. Nothing else about 1.26.50 changed across the renumber — Mojang's
