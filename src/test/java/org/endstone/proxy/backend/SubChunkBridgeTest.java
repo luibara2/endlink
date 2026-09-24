@@ -150,6 +150,49 @@ final class SubChunkBridgeTest {
     }
 
     @Test
+    void manyChangesToOneSubChunkAllReachTheAnswer() {
+        SubChunkBridge bridge = new SubChunkBridge();
+        bridge.bridge(pnxChunk(0, 0, 6, null));
+
+        bridge.updateBlock(Vector3i.from(1, 96, 1), 0, STONE);
+        bridge.updateBlock(Vector3i.from(2, 97, 3), 0, GLASS);
+        bridge.updateBlock(Vector3i.from(1, 96, 1), 1, 0x2222222);
+        bridge.updateBlock(Vector3i.from(2, 97, 3), 0, BedrockBlockStateHash.AIR);
+
+        SubChunkPacket answer = bridge.answer(request(Vector3i.ZERO, Vector3i.from(0, 6, 0)));
+        ByteBuf data = answer.getSubChunks().get(0).getData();
+        SubChunkBridge.SubChunkLayers layers = SubChunkBridge.SubChunkLayers.read(data.slice(), 6);
+        int[][] blocks = layers.blocks();
+        assertEquals(2, blocks.length);
+        assertEquals(STONE, blocks[0][org.endstone.proxy.protocol.block.SubChunkStorage.index(1, 0, 1)]);
+        assertEquals(0x2222222, blocks[1][org.endstone.proxy.protocol.block.SubChunkStorage.index(1, 0, 1)]);
+        assertEquals(BedrockBlockStateHash.AIR, blocks[0][org.endstone.proxy.protocol.block.SubChunkStorage.index(2, 1, 3)]);
+        // Sky starts above the stone once the glass over its neighbour is gone again.
+        assertEquals(1, answer.getSubChunks().get(0).getHeightMapData().getByte(SubChunkBridge.heightIndex(1, 1)));
+        answer.release();
+    }
+
+    /**
+     * A generator island sends well over a hundred block changes a second. Each one used to decode
+     * and re-encode its whole sub-chunk on the backend's event loop, which starved it: acks went
+     * out late, the backend throttled, and a clock on the scoreboard ran at a third of real time.
+     */
+    @Test
+    void blockChangesCostNextToNothing() {
+        SubChunkBridge bridge = new SubChunkBridge();
+        bridge.bridge(pnxChunk(0, 0, 6, null));
+
+        long start = System.nanoTime();
+        for (int i = 0; i < 200_000; i++) {
+            bridge.updateBlock(Vector3i.from(i & 15, 64 + ((i >> 4) & 15), (i >> 8) & 15), 0, (i & 1) == 0 ? STONE : GLASS);
+        }
+        long millis = (System.nanoTime() - start) / 1_000_000;
+
+        // Re-encoding per change took several seconds for this; in place it is milliseconds.
+        assertTrue(millis < 1500, "200k block changes took " + millis + " ms");
+    }
+
+    @Test
     void overBudgetAColumnAlreadyDeliveredGoesBeforeOneStillWaitedOn() {
         SubChunkBridge bridge = new SubChunkBridge();
         bridge.bridge(pnxChunk(100, 100, 6, null));

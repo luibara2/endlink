@@ -65,6 +65,37 @@ public final class SubChunkStorage {
         return new SubChunkStorage(newPositions, newPalette);
     }
 
+    /** A storage holding {@code runtimeIds[index]} at each position, with the palette they need. */
+    public static SubChunkStorage fromBlocks(int[] runtimeIds) {
+        if (runtimeIds.length != BLOCKS) {
+            throw new IllegalArgumentException("a storage holds " + BLOCKS + " blocks, not " + runtimeIds.length);
+        }
+        int[] positions = new int[BLOCKS];
+        java.util.Map<Integer, Integer> entries = new java.util.HashMap<>();
+        int[] palette = new int[8];
+        int size = 0;
+        int lastId = 0;
+        int lastEntry = -1;
+        for (int index = 0; index < BLOCKS; index++) {
+            int id = runtimeIds[index];
+            if (lastEntry < 0 || id != lastId) {
+                Integer entry = entries.get(id);
+                if (entry == null) {
+                    if (size == palette.length) {
+                        palette = java.util.Arrays.copyOf(palette, size * 2);
+                    }
+                    palette[size] = id;
+                    entry = size++;
+                    entries.put(id, entry);
+                }
+                lastId = id;
+                lastEntry = entry;
+            }
+            positions[index] = lastEntry;
+        }
+        return new SubChunkStorage(positions, java.util.Arrays.copyOf(palette, size));
+    }
+
     /** A storage holding one block everywhere. */
     public static SubChunkStorage uniform(int runtimeId) {
         return new SubChunkStorage(new int[BLOCKS], new int[]{runtimeId});

@@ -68,6 +68,8 @@ public final class SubChunkBridge {
     private static final int HEIGHT_MAP_LENGTH = 256;
     private static final int COPY_LAST_BIOME = (127 << 1) | 1;
     private static final int NO_BLOCK = Integer.MIN_VALUE;
+    /** What one decoded layer of an edited sub-chunk costs, counted against {@link #MAX_BYTES}. */
+    private static final long EDITED_LAYER_BYTES = 4096L * Integer.BYTES;
 
     private final Map<ColumnKey, Column> columns = new LinkedHashMap<>(256, 0.75f, true);
     private final Map<ColumnKey, List<Held>> held = new LinkedHashMap<>();
@@ -204,7 +206,7 @@ public final class SubChunkBridge {
             return;
         }
         int index = (position.getY() >> 4) - column.bottom();
-        if (index < 0 || index >= column.subChunks().length) {
+        if (index < 0 || index >= column.length()) {
             return;
         }
         long before = column.bytes();
@@ -301,9 +303,9 @@ public final class SubChunkBridge {
         }
 
         column.markDelivered(index);
-        byte[] subChunk = index < column.subChunks().length ? column.subChunks()[index] : null;
+        byte[] subChunk = index < column.length() ? column.encoded(index) : null;
         byte[] blockEntities = column.blockEntitiesIn(absoluteY);
-        if (subChunk == null || (column.allAir()[index] && blockEntities.length == 0)) {
+        if (subChunk == null || (column.isAllAir(index) && blockEntities.length == 0)) {
             data.setResult(SubChunkRequestResult.SUCCESS_ALL_AIR);
             return data;
         }
@@ -537,6 +539,16 @@ public final class SubChunkBridge {
         private final int[] highest;
         private final Map<Long, NbtMap> blockEntities;
         private final boolean[] delivered;
+        /**
+         * The blocks of each sub-chunk the backend has changed since sending it, one id per position
+         * and layer, or null for one still exactly as sent. Decoded once on the first change and
+         * edited in place after that: a generator island sends well over a hundred block changes a
+         * second, and re-encoding a whole sub-chunk for each one pinned the backend's event loop,
+         * which delayed its acks, which throttled everything the backend sent. Encoded again only
+         * when the client asks for the sub-chunk.
+         */
+        private final int[][][] edited;
+        private final boolean[] dirty;
         private int deliveredCount;
         private long bytes;
         private boolean heightStale;
@@ -551,6 +563,8 @@ public final class SubChunkBridge {
             this.highest = highest;
             this.blockEntities = blockEntities;
             this.delivered = new boolean[sections];
+            this.edited = new int[sections][][];
+            this.dirty = new boolean[sections];
             for (byte[] subChunk : subChunks) {
                 bytes += subChunk == null ? 0 : subChunk.length;
             }
@@ -591,12 +605,23 @@ public final class SubChunkBridge {
             return Math.max(top, sent);
         }
 
-        byte[][] subChunks() {
-            return subChunks;
+        /** The sub-chunk as it should go out now, or null when the backend never sent it. */
+        byte[] encoded(int index) {
+            if (dirty[index]) {
+                encode(index);
+            }
+            return subChunks[index];
         }
 
-        boolean[] allAir() {
-            return allAir;
+        boolean isAllAir(int index) {
+            if (dirty[index]) {
+                encode(index);
+            }
+            return allAir[index];
+        }
+
+        int length() {
+            return subChunks.length;
         }
 
         Map<Long, NbtMap> blockEntities() {
@@ -604,19 +629,90 @@ public final class SubChunkBridge {
         }
 
         void setBlock(int index, int x, int y, int z, int layer, int runtimeId) {
-            byte[] current = subChunks[index];
-            SubChunkLayers layers = current == null
-                    ? SubChunkLayers.empty(bottom + index)
-                    : SubChunkLayers.read(Unpooled.wrappedBuffer(current), bottom + index);
-            layers = layers.withBlock(layer, SubChunkStorage.index(x, y, z), runtimeId);
+            int[][] blocks = edited[index];
+            if (blocks == null) {
+                blocks = decode(index);
+            }
+            if (layer >= blocks.length) {
+                int[][] grown = java.util.Arrays.copyOf(blocks, layer + 1);
+                for (int i = blocks.length; i < grown.length; i++) {
+                    grown[i] = airLayer();
+                    bytes += EDITED_LAYER_BYTES;
+                }
+                blocks = grown;
+            }
+            edited[index] = blocks;
+            int position = SubChunkStorage.index(x, y, z);
+            if (blocks[layer][position] == runtimeId) {
+                return;
+            }
+            blocks[layer][position] = runtimeId;
+            dirty[index] = true;
+
+            int column = heightIndex(x, z);
+            int absoluteY = ((bottom + index) << 4) + y;
+            if (runtimeId != BedrockBlockStateHash.AIR) {
+                if (!heightStale && absoluteY > highest[column]) {
+                    highest[column] = absoluteY;
+                }
+            } else if (absoluteY >= highest[column]) {
+                // The top block went; what is under it is only known by looking.
+                heightStale = true;
+            }
+        }
+
+        private int[][] decode(int index) {
+            int[][] blocks = subChunks[index] == null
+                    ? new int[][]{airLayer()}
+                    : SubChunkLayers.read(Unpooled.wrappedBuffer(subChunks[index]), bottom + index).blocks();
+            bytes += (long) blocks.length * EDITED_LAYER_BYTES;
+            return blocks;
+        }
+
+        private void encode(int index) {
+            int[][] blocks = edited[index];
             ByteBuf out = Unpooled.buffer();
-            layers.write(out);
+            out.writeByte(9);
+            out.writeByte(blocks.length);
+            out.writeByte(bottom + index);
+            boolean air = true;
+            for (int[] layer : blocks) {
+                SubChunkStorage.fromBlocks(layer).write(out);
+                for (int id : layer) {
+                    if (id != BedrockBlockStateHash.AIR) {
+                        air = false;
+                        break;
+                    }
+                }
+            }
             byte[] written = new byte[out.readableBytes()];
             out.readBytes(written);
             bytes += written.length - (subChunks[index] == null ? 0 : subChunks[index].length);
             subChunks[index] = written;
-            allAir[index] = layers.isAllAir();
-            heightStale = true;
+            allAir[index] = air;
+            dirty[index] = false;
+        }
+
+        private static int[] airLayer() {
+            int[] layer = new int[SubChunkLayers.BLOCKS];
+            java.util.Arrays.fill(layer, BedrockBlockStateHash.AIR);
+            return layer;
+        }
+
+        private static void raiseHighest(int[][] blocks, int base, int[] highest) {
+            for (int[] layer : blocks) {
+                for (int x = 0; x < 16; x++) {
+                    for (int z = 0; z < 16; z++) {
+                        int column = heightIndex(x, z);
+                        for (int localY = 15; localY >= 0 && base + localY > highest[column]; localY--) {
+                            if (layer[SubChunkStorage.index(x, localY, z)] != BedrockBlockStateHash.AIR) {
+                                highest[column] = base + localY;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         /**
@@ -633,7 +729,9 @@ public final class SubChunkBridge {
             if (heightStale) {
                 java.util.Arrays.fill(highest, NO_BLOCK);
                 for (int i = 0; i < subChunks.length; i++) {
-                    if (subChunks[i] != null) {
+                    if (edited[i] != null) {
+                        raiseHighest(edited[i], (bottom + i) << 4, highest);
+                    } else if (subChunks[i] != null) {
                         SubChunkLayers.read(Unpooled.wrappedBuffer(subChunks[i]), bottom + i).raiseHighest(highest);
                     }
                 }
@@ -690,16 +788,14 @@ public final class SubChunkBridge {
      * one. Versions 1, 8 and 9 are read; a sub-chunk is always written back as version 9.
      */
     static final class SubChunkLayers {
+        static final int BLOCKS = 4096;
+
         private final int y;
         private final SubChunkStorage[] layers;
 
         private SubChunkLayers(int y, SubChunkStorage[] layers) {
             this.y = y;
             this.layers = layers;
-        }
-
-        static SubChunkLayers empty(int y) {
-            return new SubChunkLayers(y, new SubChunkStorage[]{SubChunkStorage.uniform(BedrockBlockStateHash.AIR)});
         }
 
         static SubChunkLayers read(ByteBuf in, int fallbackY) {
@@ -836,24 +932,20 @@ public final class SubChunkBridge {
             return false;
         }
 
-        SubChunkLayers withBlock(int layer, int index, int runtimeId) {
-            SubChunkStorage[] next = java.util.Arrays.copyOf(layers, Math.max(layers.length, layer + 1));
-            for (int i = 0; i < next.length; i++) {
-                if (next[i] == null) {
-                    next[i] = SubChunkStorage.uniform(BedrockBlockStateHash.AIR);
+        /** Every layer unpacked into one id per position; at least one layer. */
+        int[][] blocks() {
+            int[][] blocks = new int[Math.max(1, layers.length)][];
+            for (int i = 0; i < blocks.length; i++) {
+                blocks[i] = new int[BLOCKS];
+                if (i < layers.length) {
+                    for (int index = 0; index < BLOCKS; index++) {
+                        blocks[i][index] = layers[i].blockAt(index);
+                    }
+                } else {
+                    java.util.Arrays.fill(blocks[i], BedrockBlockStateHash.AIR);
                 }
             }
-            next[layer] = next[layer].withBlockAt(index, runtimeId);
-            return new SubChunkLayers(y, next);
-        }
-
-        void write(ByteBuf out) {
-            out.writeByte(9);
-            out.writeByte(layers.length);
-            out.writeByte(y);
-            for (SubChunkStorage layer : layers) {
-                layer.write(out);
-            }
+            return blocks;
         }
     }
 }
