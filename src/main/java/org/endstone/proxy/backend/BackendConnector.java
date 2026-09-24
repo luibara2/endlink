@@ -218,7 +218,9 @@ public final class BackendConnector {
      *   <li><b>Sub-chunk requests.</b> A client that a BDS backend has put into request mode keeps it
      *   for the session, and on arrival at a backend that sends whole chunks - PowerNukkitX, Geyser -
      *   it asks for the sub-chunks around the player and waits on "Building terrain" for answers that
-     *   never come. The reverse is harmless: a request-mode backend announces the mode itself.</li>
+     *   never come. The reverse is harmless: a request-mode backend announces the mode itself. The
+     *   proxy now answers those requests itself ({@link SubChunkBridge}), so this is only a reason
+     *   when that is switched off with {@code -Dproxy.noSubChunkBridge=true}.</li>
      * </ul>
      */
     public String reconnectReason(ProxyConnection connection, BackendConfig backend) {
@@ -226,7 +228,9 @@ public final class BackendConnector {
                 connection.clientBlockIdsHashed(),
                 paletteStore == null ? null : paletteStore.blockIdsHashed(backend.name()),
                 connection.clientRequestsSubChunks(),
-                sendsOnlyWholeChunks(backend)
+                // Answered by the proxy instead; see SubChunkBridge. Left as a reason only when the
+                // bridge is switched off.
+                !SubChunkBridge.ENABLED && sendsOnlyWholeChunks(backend)
         );
     }
 

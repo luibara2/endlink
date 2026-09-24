@@ -23,6 +23,8 @@ import org.cloudburstmc.protocol.bedrock.packet.AvailableCommandsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BiomeDefinitionListPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BossEventPacket;
 import org.cloudburstmc.protocol.bedrock.packet.CameraPresetsPacket;
+import org.cloudburstmc.protocol.bedrock.data.BlockChangeEntry;
+import org.cloudburstmc.protocol.bedrock.packet.BlockEntityDataPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ChangeDimensionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ChunkRadiusUpdatedPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ClientCacheBlobStatusPacket;
@@ -631,10 +633,12 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
         if (packet instanceof LevelChunkPacket chunk) {
             learnChunkMode(chunk);
         }
+        keepBridgedSubChunksCurrent(packet);
         flushPendingInitialClientboundIfReady();
         int sourceDimension = connection.playerDimensionId();
         if (pendingStartGame) {
             clearPreviousClientWorldState();
+            connection.subChunkBridge().clear();
         }
         if (connection.crossBackendPalette().isEnabled() && handleCrossBackendPalette(packet, traceSequence)) {
             return PacketSignal.HANDLED;
@@ -1147,6 +1151,31 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
     ) {
         BedrockPacket outbound = translated;
         boolean generatedOutbound = false;
+        SubChunkBridge.Bridged bridged = translated instanceof LevelChunkPacket chunk ? bridgeWholeChunk(chunk) : null;
+        if (bridged != null) {
+            if (buffered) {
+                // A buffered packet was retained for this send; the shell goes out in its place.
+                ReferenceCountUtil.release(translated);
+            }
+            connection.client().sendPacket(bridged.shell());
+            for (SubChunkPacket answer : bridged.answers()) {
+                connection.client().sendPacket(answer);
+            }
+            if (traceSequence > 0) {
+                System.out.printf(
+                        "Bridged whole chunk #%d from backend %s as a sub-chunk request shell: chunk=(%d,%d) dimension=%d limit=%d heldAnswers=%d kept=%d.%n",
+                        traceSequence,
+                        backendName,
+                        bridged.shell().getChunkX(),
+                        bridged.shell().getChunkZ(),
+                        bridged.shell().getDimension(),
+                        bridged.shell().getSubChunkLimit(),
+                        bridged.answers().size(),
+                        connection.subChunkBridge().columnCount()
+                );
+            }
+            return true;
+        }
         if (translated instanceof LevelChunkPacket) {
             sendInitialCrossProtocolServerReady();
             normalizeInitialCrossProtocolLevelChunk((LevelChunkPacket) translated, traceSequence);
@@ -1337,9 +1366,58 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
      * Only the first chunk of each backend session is learned from; a backend does not change mode
      * mid-session, and this runs for every chunk of every player.</p>
      */
+    /**
+     * Turns a whole chunk into the request-mode shell a client in sub-chunk request mode expects,
+     * keeping its sub-chunks to answer that client's requests with. See {@link SubChunkBridge}.
+     *
+     * @return null when the chunk should go out as it is
+     */
+    private SubChunkBridge.Bridged bridgeWholeChunk(LevelChunkPacket chunk) {
+        if (!SubChunkBridge.ENABLED
+                || chunk.isRequestSubChunks()
+                || chunk.isCachingEnabled()
+                || !connection.clientRequestsSubChunks()) {
+            return null;
+        }
+        return connection.subChunkBridge().bridge(chunk);
+    }
+
+    /**
+     * Applies the backend's block changes to the sub-chunks the bridge keeps, and forgets them when
+     * the player leaves the world they belong to.
+     */
+    private void keepBridgedSubChunksCurrent(BedrockPacket packet) {
+        SubChunkBridge bridge = connection.subChunkBridge();
+        if (!bridge.isActive()) {
+            return;
+        }
+        if (packet instanceof UpdateBlockPacket update && update.getDefinition() != null) {
+            bridge.updateBlock(update.getBlockPosition(), update.getDataLayer(), update.getDefinition().getRuntimeId());
+        } else if (packet instanceof UpdateSubChunkBlocksPacket update) {
+            for (BlockChangeEntry entry : update.getStandardBlocks()) {
+                if (entry.getDefinition() != null) {
+                    bridge.updateBlock(entry.getPosition(), 0, entry.getDefinition().getRuntimeId());
+                }
+            }
+            for (BlockChangeEntry entry : update.getExtraBlocks()) {
+                if (entry.getDefinition() != null) {
+                    bridge.updateBlock(entry.getPosition(), 1, entry.getDefinition().getRuntimeId());
+                }
+            }
+        } else if (packet instanceof BlockEntityDataPacket blockEntity) {
+            bridge.updateBlockEntity(blockEntity.getBlockPosition(), blockEntity.getData());
+        } else if (packet instanceof ChangeDimensionPacket) {
+            bridge.clear();
+        }
+    }
+
     private void learnChunkMode(LevelChunkPacket chunk) {
         if (chunk.isRequestSubChunks()) {
             connection.rememberClientRequestsSubChunks();
+        } else if (!chunk.isCachingEnabled()) {
+            // Seen sending whole chunks, so it will never answer a request either: from now on the
+            // client's requests are answered by the proxy even on a backend's first visit.
+            backend.setDropSubChunkRequests(true);
         }
         if (chunkModeLearned) {
             return;
@@ -1351,8 +1429,11 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
                     backendName,
                     chunk.isRequestSubChunks()
                             ? "has clients request terrain a sub-chunk at a time"
-                            : "sends whole chunks and does not answer sub-chunk requests; players already in "
-                                    + "sub-chunk mode will reach it by reconnect"
+                            : SubChunkBridge.ENABLED
+                                    ? "sends whole chunks and does not answer sub-chunk requests; the proxy "
+                                            + "answers them for players already in sub-chunk mode"
+                                    : "sends whole chunks and does not answer sub-chunk requests; players already in "
+                                            + "sub-chunk mode will reach it by reconnect"
             );
         }
     }
@@ -1510,6 +1591,18 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
                 .translateClientbound(rewriteClientboundRuntimeIds(packet), connection.sessionProfile().translationContext());
         if (translated == null) {
             return false;
+        }
+        SubChunkBridge.Bridged bridged = translated instanceof LevelChunkPacket chunk ? bridgeWholeChunk(chunk) : null;
+        if (bridged != null) {
+            // Kept now, so requests the client sends before the replay are answered; the shell is
+            // what the replay delivers.
+            if (!connection.addDeferredSwitchWorldState(bridged.shell())) {
+                bridged.shell().release();
+            }
+            for (SubChunkPacket answer : bridged.answers()) {
+                connection.client().sendPacket(answer);
+            }
+            return true;
         }
         BedrockPacket retained = ReferenceCountUtil.retain(translated);
         if (connection.addDeferredSwitchWorldState(retained)) {
@@ -3145,7 +3238,12 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
                                     // and storage count, which is what says the payload is the
                                     // standard unchanged encoding.
                                     + ":render=" + data.getRenderHeightMapType()
-                                    + ":first=" + preview(data.getData(), 4))
+                                    + (data.getData() == null ? ":noData" : "")
+                                    + ":first=" + preview(data.getData(), 4)
+                                    + SubChunkBridge.describeHeightMap(data,
+                                            subChunk.getCenterPosition() == null || data.getPosition() == null
+                                                    ? 0
+                                                    : subChunk.getCenterPosition().getY() + data.getPosition().getY()))
                             .collect(Collectors.joining(","))
             );
         } else if (packet instanceof ClientCacheMissResponsePacket missResponse) {

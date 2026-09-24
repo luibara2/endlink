@@ -248,11 +248,13 @@ asked. The player never leaves the proxy: same listener, same identity check, sa
 backends stay unreachable from outside. They see a loading screen. Switches between backends of the
 same kind are seamless as before.
 
-The same reconnect is used for a Bedrock backend that sends whole chunks, such as **PowerNukkitX**.
-BDS and Endstone have the client request terrain a sub-chunk at a time, and a client keeps that mode
-for its whole session; handed seamlessly to a server that never answers those requests, it waits on
-"Building terrain" in an empty world. Endlink learns this from each backend's first chunk too, so a
-player who met a BDS backend first reaches a whole-chunk one by reconnect. The way back is seamless.
+A Bedrock backend that sends whole chunks, such as **PowerNukkitX**, needs no reconnect. BDS and
+Endstone have the client request terrain a sub-chunk at a time, and a client keeps that mode for its
+whole session, while a whole-chunk server never answers those requests. So for a player who met a BDS
+backend first, Endlink answers them itself: it takes each whole chunk apart, sends the client the
+biome-only chunk a BDS server would, and serves the sub-chunks from what it kept, holding any request
+that arrives before its chunk. Switches between BDS and PowerNukkitX are seamless both ways. Start the
+proxy with `-Dproxy.noSubChunkBridge=true` to reach such backends by reconnect instead.
 
 That transfer needs an address to send the client back to. By default the proxy uses whatever address
 each player connected with, which is correct per player and needs no configuration; set

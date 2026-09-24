@@ -48,6 +48,7 @@ public final class ProxyConnection {
     private Boolean clientBlockIdsHashed;
     private boolean clientRequestsSubChunks;
     private final ClientWorldState clientWorldState = new ClientWorldState();
+    private final SubChunkBridge subChunkBridge = new SubChunkBridge();
     private BackendSession backend;
     private String backendName;
     private BackendSession pendingBackend;
@@ -279,6 +280,11 @@ public final class ProxyConnection {
 
     public synchronized void rememberClientRequestsSubChunks() {
         clientRequestsSubChunks = true;
+    }
+
+    /** Answers this client's sub-chunk requests on behalf of a backend that sends whole chunks. */
+    public SubChunkBridge subChunkBridge() {
+        return subChunkBridge;
     }
 
     public synchronized BackendSession backend() {

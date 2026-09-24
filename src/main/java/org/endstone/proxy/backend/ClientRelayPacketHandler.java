@@ -52,6 +52,7 @@ import org.endstone.proxy.resource.ProxyResourcePackRegistry;
 import org.cloudburstmc.protocol.bedrock.packet.RespawnPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ServerboundLoadingScreenPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetLocalPlayerAsInitializedPacket;
+import org.cloudburstmc.protocol.bedrock.packet.SubChunkPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SubChunkRequestPacket;
 import org.cloudburstmc.protocol.common.PacketSignal;
 import org.endstone.proxy.command.CommandInterception;
@@ -657,7 +658,25 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
         // doing it after the handoff. A backend that never advertised the system then receives
         // requests it cannot answer. Withheld here rather than translated away because there is
         // nothing to translate to — the request simply has no meaning there.
-        if (backend != null && backend.dropSubChunkRequests() && packet instanceof SubChunkRequestPacket) {
+        if (backend != null
+                && packet instanceof SubChunkRequestPacket request
+                && (backend.dropSubChunkRequests() || connection.subChunkBridge().isActive())) {
+            if (SubChunkBridge.ENABLED && connection.clientRequestsSubChunks()) {
+                // The proxy keeps what this backend sent as whole chunks and answers in its place.
+                SubChunkPacket answer = connection.subChunkBridge().answer(request);
+                if (answer != null) {
+                    connection.client().sendPacket(answer);
+                }
+                if (traceSequence >= 0 || connection.isPacketTraceActive()) {
+                    System.out.printf(
+                            "Answered SubChunkRequest for backend %s from the sub-chunk bridge: asked=%d answered=%d.%n",
+                            connection.backendName(),
+                            request.getPositionOffsets().size(),
+                            answer == null ? 0 : answer.getSubChunks().size()
+                    );
+                }
+                return;
+            }
             if (traceSequence >= 0 || connection.isPacketTraceActive()) {
                 System.out.printf(
                         "Withholding SubChunkRequest from backend %s: it does not implement the sub-chunk system.%n",

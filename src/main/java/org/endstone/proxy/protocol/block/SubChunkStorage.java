@@ -65,6 +65,11 @@ public final class SubChunkStorage {
         return new SubChunkStorage(newPositions, newPalette);
     }
 
+    /** A storage holding one block everywhere. */
+    public static SubChunkStorage uniform(int runtimeId) {
+        return new SubChunkStorage(new int[BLOCKS], new int[]{runtimeId});
+    }
+
     public static int index(int x, int y, int z) {
         return (x << 8) | (z << 4) | y;
     }
