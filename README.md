@@ -24,7 +24,16 @@ On first start it writes a fully documented `config.properties` and creates a `p
 > join, play, and switch between backends keeping their session, identity and permissions. That has
 > run a live server at around ten concurrent players.
 >
-> **New in v0.5.3: PowerNukkitX backends, played on.** A player who met a BDS or Endstone backend
+> **New in v0.5.4: BDS to PowerNukkitX without the reconnect.** v0.5.3 reached a PowerNukkitX
+> backend by sending the player round a reconnect. Endlink now answers the client's sub-chunk
+> requests itself: it takes each whole chunk PowerNukkitX sends apart, gives the client the
+> biome-only chunk a BDS server would, and serves the sub-chunks from what it kept, so switches
+> between BDS or Endstone and PowerNukkitX are seamless both ways. Also fixed: log output was
+> written on the network threads, so a console that could not keep up (MCSManager, with packet
+> logging on) stalled the backend a player was on; it now goes through a background writer.
+> Tested with a real 1.26.51 client against a PowerNukkitX 3.0.5 server behind an Endstone hub.
+>
+> **In v0.5.3: PowerNukkitX backends, played on.** A player who met a BDS or Endstone backend
 > first and then switched to a PowerNukkitX one sat on *Building terrain* for good, or fell through
 > an empty world. BDS has the client request terrain a sub-chunk at a time and the client keeps that
 > mode for the session; PowerNukkitX sends whole chunks and never answers the requests. Endlink now

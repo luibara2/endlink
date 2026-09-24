@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "org.endstone"
-version = "0.5.3"
+version = "0.5.4"
 
 java {
     toolchain {
