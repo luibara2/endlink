@@ -147,16 +147,35 @@ public final class BackendInitialPacketHandler implements BedrockPacketHandler {
                     packet.getStatus(),
                     backendName
             );
-            warnedPreHandshakeDisconnect = true;
-            backend.setDisconnectClientOnClose(false);
-            IllegalStateException failure = new IllegalStateException(
-                    "Backend " + backendName + " rejected the login: " + packet.getStatus());
+            rejectLogin(String.valueOf(packet.getStatus()));
+        }
+        return PacketSignal.HANDLED;
+    }
+
+    /**
+     * Fails this attempt now and closes the backend connection behind it, instead of leaving a
+     * session the backend has already refused open until RakNet times it out.
+     */
+    private void rejectLogin(String cause) {
+        warnedPreHandshakeDisconnect = true;
+        backend.setDisconnectClientOnClose(false);
+        pendingJoinRegistry.removeIfPending(pendingJoin);
+        pendingJoin = null;
+        connection.untrackConnectingBackend(backend);
+        // Stop this handler before the failure callback: the socket closing behind the rejection
+        // would otherwise report the same failure a second time through onDisconnect.
+        backend.discardInboundPackets();
+        IllegalStateException failure = new IllegalStateException(
+                "Backend " + backendName + " rejected the login: " + cause);
+        try {
             if (joinFailover == null || !joinFailover.handleJoinFailure(connection, backendName, failure.getMessage())) {
                 activation.onFailure(backend, failure);
             }
-            backend.disconnect("Login rejected");
+        } finally {
+            if (backend.isConnected()) {
+                backend.disconnect("Login rejected");
+            }
         }
-        return PacketSignal.HANDLED;
     }
 
     /**
@@ -178,11 +197,27 @@ public final class BackendInitialPacketHandler implements BedrockPacketHandler {
                 packet.getFilteredMessage()
         );
         warnPreHandshakeDisconnect(packet);
+        // The backend has refused this login and is about to drop the connection. Failing now moves
+        // the player on at once rather than after RakNet's 10s timeout, and closing it ourselves means
+        // the proxy never holds a connection the backend has already given up on.
+        rejectLogin(disconnectCause(packet));
         return PacketSignal.HANDLED;
+    }
+
+    private static String disconnectCause(DisconnectPacket packet) {
+        String kickMessage = packet.getKickMessage();
+        if (kickMessage != null && !kickMessage.isBlank()) {
+            return kickMessage;
+        }
+        return String.valueOf(packet.getReason());
     }
 
     @Override
     public PacketSignal handle(ServerToClientHandshakePacket packet) {
+        if (!isClientConnected()) {
+            abandon("Client disconnected before backend handshake");
+            return PacketSignal.HANDLED;
+        }
         try {
             JsonWebSignature signature = new JsonWebSignature();
             signature.setCompactSerialization(packet.getJwt());
@@ -218,6 +253,11 @@ public final class BackendInitialPacketHandler implements BedrockPacketHandler {
                     backendSwitcher
             ));
             activation.onReady(backend);
+            if (!isClientConnected()) {
+                // Left during the handshake, after closeBackend() had already run.
+                abandon("Client disconnected during backend handshake");
+                return PacketSignal.HANDLED;
+            }
             connection.client().setPacketHandler(new ClientRelayPacketHandler(
                     connection,
                     new ProxyCommandInterceptor(
@@ -241,6 +281,8 @@ public final class BackendInitialPacketHandler implements BedrockPacketHandler {
 
     @Override
     public void onDisconnect(CharSequence reason) {
+        pendingJoinRegistry.removeIfPending(pendingJoin);
+        connection.untrackConnectingBackend(backend);
         System.out.printf(
                 "Backend %s closed before completing the encryption handshake: %s.%n",
                 backendName,
@@ -288,6 +330,22 @@ public final class BackendInitialPacketHandler implements BedrockPacketHandler {
         return backendDirectory.backendNames().stream()
                 .filter(name -> permissions.mayJoinBackend(xuid, displayName, name))
                 .toList();
+    }
+
+    private boolean isClientConnected() {
+        return connection.client() == null || connection.client().isConnected();
+    }
+
+    /** Closes a backend whose player has gone, without reporting it as a failure to anyone. */
+    private void abandon(CharSequence reason) {
+        pendingJoinRegistry.removeIfPending(pendingJoin);
+        pendingJoin = null;
+        connection.untrackConnectingBackend(backend);
+        backend.setDisconnectClientOnClose(false);
+        backend.discardInboundPackets();
+        if (backend.isConnected()) {
+            backend.disconnect(reason);
+        }
     }
 
     private void warnPreHandshakeDisconnect(DisconnectPacket packet) {

@@ -14,7 +14,9 @@ import org.endstone.proxy.session.ProxySessionProfile;
 
 import java.security.KeyPair;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -52,6 +54,14 @@ public final class ProxyConnection {
     private BackendSession backend;
     private String backendName;
     private BackendSession pendingBackend;
+    /**
+     * Initial-join backends still dialling or logging in. A switch target is tracked as the pending
+     * backend, but these were tracked by nothing: a player who left mid-join - while join failover
+     * sat out a backend's timeout, say - left the attempt running, it finished its handshake into a
+     * connection nobody would ever close, and the backend refused every rejoin after that with
+     * SERVER_ID_CONFLICT because it still had the player.
+     */
+    private final Set<BackendSession> connectingBackends = Collections.newSetFromMap(new IdentityHashMap<>());
     private boolean backendSwitchInProgress;
     private String backendSwitchTarget;
     private long backendSwitchStartedAtMillis;
@@ -303,10 +313,28 @@ public final class ProxyConnection {
         return backendSwitchInProgress;
     }
 
+    /**
+     * Records an initial-join backend so that the client leaving closes it too.
+     *
+     * @return false when the client has already left; the caller must then close the backend itself
+     */
+    public synchronized boolean trackConnectingBackend(BackendSession backend) {
+        if (client != null && !client.isConnected()) {
+            return false;
+        }
+        connectingBackends.add(backend);
+        return true;
+    }
+
+    public synchronized void untrackConnectingBackend(BackendSession backend) {
+        connectingBackends.remove(backend);
+    }
+
     public synchronized void setBackend(String backendName, BackendSession backend) {
         if (backendName == null || backendName.isBlank()) {
             throw new IllegalArgumentException("backendName cannot be blank");
         }
+        connectingBackends.remove(backend);
         this.backendName = backendName;
         this.backend = backend;
         backendSwitchInProgress = false;
@@ -989,10 +1017,13 @@ public final class ProxyConnection {
     public void closeBackend(CharSequence reason) {
         BackendSession backend;
         BackendSession pendingBackend;
+        List<BackendSession> connectingBackends;
         synchronized (this) {
             backend = this.backend;
             pendingBackend = this.pendingBackend;
             this.pendingBackend = null;
+            connectingBackends = new ArrayList<>(this.connectingBackends);
+            this.connectingBackends.clear();
         }
         if (backend != null && backend.isConnected()) {
             backend.disconnect(reason);
@@ -1001,6 +1032,13 @@ public final class ProxyConnection {
             pendingBackend.setDisconnectClientOnClose(false);
             pendingBackend.discardInboundPackets();
             pendingBackend.disconnect(reason);
+        }
+        for (BackendSession connecting : connectingBackends) {
+            if (connecting != backend && connecting != pendingBackend && connecting.isConnected()) {
+                connecting.setDisconnectClientOnClose(false);
+                connecting.discardInboundPackets();
+                connecting.disconnect(reason);
+            }
         }
         synchronized (this) {
             backendSwitchReset = null;

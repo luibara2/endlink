@@ -41,6 +41,10 @@ the modifications carried here are:
   * Fixed a direct-memory leak in SubChunkData: the render height map retained a
     slice that was never released, leaking 256 bytes per sub-chunk carrying one.
 
+  * BedrockPeer closes its channel when the remote end sends a RakNet
+    disconnection notification. Upstream only records the reason, so a client
+    connection the server had already closed stayed open until it timed out.
+
   * Removed upstream modules and sources this project does not use.
 
 --------------------------------------------------------------------------------

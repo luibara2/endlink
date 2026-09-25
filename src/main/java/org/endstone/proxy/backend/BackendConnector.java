@@ -562,6 +562,14 @@ public final class BackendConnector {
                         createdSession.set(backend);
                         backend.setConnection(connection);
                         backend.setDisconnectClientOnClose(disconnectClientOnClose);
+                        if (disconnectClientOnClose && !connection.trackConnectingBackend(backend)) {
+                            // The player left while this was dialling. Finishing the login would
+                            // leave the backend holding a player nobody is connected as.
+                            backend.setDisconnectClientOnClose(false);
+                            backend.discardInboundPackets();
+                            backend.disconnect("Client disconnected before backend login");
+                            return;
+                        }
                         // Inferred rather than configured wherever possible: a backend that numbers
                         // block ids by palette order is not really a Bedrock server and does not
                         // implement the sub-chunk system either. The config key stays as an override
@@ -638,6 +646,15 @@ public final class BackendConnector {
         BackendSession backend = createdSession.get();
         if (backend == null) {
             throw new IllegalStateException("Connected to backend " + backendConfig.address() + " without creating a Bedrock session");
+        }
+        if (!backend.isConnected() || (connection.client() != null && !connection.client().isConnected())) {
+            // Closed by initSession or by the client leaving since: logging in now would only
+            // re-create the stale session this is avoiding.
+            backend.setDisconnectClientOnClose(false);
+            if (backend.isConnected()) {
+                backend.disconnect("Client disconnected while connecting to backend");
+            }
+            return;
         }
 
         RequestNetworkSettingsPacket request = new RequestNetworkSettingsPacket();

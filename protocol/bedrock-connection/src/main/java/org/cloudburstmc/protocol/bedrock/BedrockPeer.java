@@ -100,6 +100,13 @@ public class BedrockPeer extends ChannelInboundHandlerAdapter {
         for (BedrockSession session : this.sessions.values()) {
             session.disconnectReason = disconnectReason;
         }
+        // The remote end has already closed its session. A server-side child channel is closed by
+        // its RakChannelPipeline, but nothing closes a client channel: it stayed open, onClose()
+        // refused to run ("channel is open"), and the dead session lingered until RakNet's 10s
+        // timeout - still counted as connected by everything holding it.
+        if (reason == RakDisconnectReason.CLOSED_BY_REMOTE_PEER && this.channel.isOpen()) {
+            this.channel.close();
+        }
     }
 
     private void free() {
