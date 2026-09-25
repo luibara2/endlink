@@ -24,6 +24,17 @@ import static org.cloudburstmc.protocol.common.util.Preconditions.checkArgument;
 public class LoginSerializer_v291 implements BedrockPacketSerializer<LoginPacket> {
     public static final LoginSerializer_v291 INSTANCE = new LoginSerializer_v291();
 
+    /**
+     * Largest auth JWT accepted, from {@code -Dbedrock.maxLoginAuthJwtBytes} (default 128 KiB).
+     *
+     * <p>Endlink patch. The auth JWT is handed to {@code JsonUtil.parseJson} before any signature has
+     * been checked, at ~79 bytes of heap per source byte for a nested payload. A real one — the
+     * certificate chain plus, on newer clients, the token — is a few kilobytes. The login batch may be
+     * several megabytes because the <em>client</em> JWT carries the skin, so this part needs a bound
+     * of its own rather than inheriting the batch's.
+     */
+    public static final int MAX_AUTH_JWT_BYTES = Integer.getInteger("bedrock.maxLoginAuthJwtBytes", 128 * 1024);
+
     @Override
     public void serialize(ByteBuf buffer, BedrockCodecHelper helper, LoginPacket packet) {
         buffer.writeInt(packet.getProtocolVersion());
@@ -37,7 +48,7 @@ public class LoginSerializer_v291 implements BedrockPacketSerializer<LoginPacket
 
         ByteBuf jwt = buffer.readSlice(VarInts.readUnsignedInt(buffer)); // Get the JWT.
 
-        String authJwt = readString(jwt);
+        String authJwt = readAuthJwtString(jwt);
         packet.setAuthPayload(readAuthJwt(authJwt));
 
         String value = (String) jwt.readCharSequence(jwt.readIntLE(), StandardCharsets.UTF_8);
@@ -81,6 +92,18 @@ public class LoginSerializer_v291 implements BedrockPacketSerializer<LoginPacket
         buffer.writeCharSequence(authJwt, StandardCharsets.UTF_8);
         buffer.writeIntLE(clientLength);
         buffer.writeCharSequence(clientJwt, StandardCharsets.UTF_8);
+    }
+
+    protected String readAuthJwtString(ByteBuf buffer) {
+        checkAuthJwtLength(buffer.getIntLE(buffer.readerIndex()));
+        return readString(buffer);
+    }
+
+    public static void checkAuthJwtLength(int length) {
+        if (length < 0 || (MAX_AUTH_JWT_BYTES > 0 && length > MAX_AUTH_JWT_BYTES)) {
+            throw new IllegalArgumentException("Login auth JWT of " + length
+                    + " bytes exceeds the maximum of " + MAX_AUTH_JWT_BYTES + " bytes");
+        }
     }
 
     protected String readString(ByteBuf buffer) {

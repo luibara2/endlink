@@ -81,6 +81,7 @@ public final class ClientLoginAuthenticator {
             }
 
             PublicKey identityPublicKey = chain.identityClaims().parsedIdentityPublicKey();
+            ClientDataLimits.checkHeader(packet.getClientJwt());
             JsonWebSignature clientData = new JsonWebSignature();
             clientData.setCompactSerialization(packet.getClientJwt());
             clientData.setKey(identityPublicKey);
@@ -88,8 +89,10 @@ public final class ClientLoginAuthenticator {
                 throw new IllegalStateException("Client data signature does not match login identity key");
             }
 
+            String clientPayload = clientData.getUnverifiedPayload();
+            ClientDataLimits.checkPayloadShape(clientPayload);
             @SuppressWarnings("unchecked")
-            JSONObject skinData = new JSONObject((Map<String, Object>) JsonUtil.parseJson(clientData.getUnverifiedPayload()));
+            JSONObject skinData = new JSONObject((Map<String, Object>) JsonUtil.parseJson(clientPayload));
             ChainValidationResult.IdentityData identityData = chain.identityClaims().extraData;
             if (requireXuid && (identityData.xuid == null || identityData.xuid.isBlank())) {
                 throw new IllegalStateException(

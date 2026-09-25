@@ -41,6 +41,7 @@ public class SubClientLoginSerializer_v291 implements BedrockPacketSerializer<Su
     public void deserialize(ByteBuf buffer, BedrockCodecHelper helper, SubClientLoginPacket packet) {
         ByteBuf jwt = buffer.readSlice(VarInts.readUnsignedInt(buffer)); // Get the JWT.
 
+        LoginSerializer_v291.checkAuthJwtLength(jwt.getIntLE(jwt.readerIndex()));
         String authJwt = readString(jwt);
         packet.setAuthPayload(readAuthJwt(authJwt));
 

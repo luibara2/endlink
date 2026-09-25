@@ -6,6 +6,7 @@ import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
+import org.cloudburstmc.protocol.bedrock.codec.v291.serializer.LoginSerializer_v291;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockPacketSerializer;
 import org.cloudburstmc.protocol.bedrock.data.auth.CertificateChainPayload;
 import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
@@ -34,6 +35,7 @@ public class LoginSerializerCompat implements BedrockPacketSerializer<LoginPacke
 
         ByteBuf jwt = buffer.readSlice(VarInts.readUnsignedInt(buffer)); // Get the JWT.
 
+        LoginSerializer_v291.checkAuthJwtLength(jwt.getIntLE(jwt.readerIndex()));
         Object json = JSONValue.parse(readString(jwt).toString());
         checkArgument(json instanceof JSONObject && ((JSONObject) json).containsKey("chain"), "Invalid login chain");
         Object chain = ((JSONObject) json).get("chain");

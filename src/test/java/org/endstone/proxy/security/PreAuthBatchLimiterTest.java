@@ -5,6 +5,7 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.TooLongFrameException;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockBatchWrapper;
+import org.cloudburstmc.protocol.common.util.VarInts;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -32,6 +33,66 @@ class PreAuthBatchLimiterTest {
         ByteBuf uncompressed = Unpooled.buffer(uncompressedBytes);
         uncompressed.writeZero(uncompressedBytes);
         return BedrockBatchWrapper.newInstance(null, uncompressed);
+    }
+
+    /** One length-prefixed packet with the given id, padded so the whole batch is {@code totalBytes}. */
+    private static BedrockBatchWrapper singlePacketBatch(int packetId, int totalBytes) {
+        ByteBuf uncompressed = Unpooled.buffer(totalBytes);
+        int bodyLength = totalBytes - 3; // three-byte length varint for every size these tests use
+        VarInts.writeUnsignedInt(uncompressed, bodyLength);
+        if (uncompressed.writerIndex() != 3) {
+            throw new IllegalArgumentException("pick a size whose length prefix is three bytes");
+        }
+        VarInts.writeUnsignedInt(uncompressed, packetId);
+        uncompressed.writeZero(totalBytes - uncompressed.writerIndex());
+        return BedrockBatchWrapper.newInstance(null, uncompressed);
+    }
+
+    private static void assertRefused(EmbeddedChannel channel, BedrockBatchWrapper batch) {
+        Throwable thrown = assertThrows(Throwable.class, () -> channel.writeInbound(batch));
+        assertInstanceOf(TooLongFrameException.class, thrown, "expected a refusal, got " + thrown);
+        assertEquals(0, batch.refCnt(), "the refused batch must be released, not leaked");
+    }
+
+    private static final int LOGIN_LIMIT = LIMIT * 16;
+
+    @Test
+    void allowsOneLargeLoginBatch() {
+        // Custom skins with geometry make the login batch several megabytes.
+        EmbeddedChannel channel = new EmbeddedChannel(new PreAuthBatchLimiter(LIMIT, LOGIN_LIMIT, () -> false));
+        assertTrue(channel.writeInbound(singlePacketBatch(1, LOGIN_LIMIT)), "a large login must pass");
+        BedrockBatchWrapper forwarded = channel.readInbound();
+        assertEquals(LOGIN_LIMIT, forwarded.getUncompressed().readableBytes());
+        forwarded.release();
+
+        // Once only: a second large batch while still anonymous is the attack shape again.
+        assertRefused(channel, singlePacketBatch(1, LOGIN_LIMIT));
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void largeAllowanceIsForLoginPacketsOnly() {
+        EmbeddedChannel channel = new EmbeddedChannel(new PreAuthBatchLimiter(LIMIT, LOGIN_LIMIT, () -> false));
+        assertRefused(channel, singlePacketBatch(94, LOGIN_LIMIT)); // SubClientLogin
+        assertRefused(channel, singlePacketBatch(193, LOGIN_LIMIT)); // RequestNetworkSettings
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void largeAllowanceIsForASingleLoginPacketOnly() {
+        EmbeddedChannel channel = new EmbeddedChannel(new PreAuthBatchLimiter(LIMIT, LOGIN_LIMIT, () -> false));
+        // A login followed by anything else: the length prefix no longer spans the batch.
+        BedrockBatchWrapper padded = singlePacketBatch(1, LOGIN_LIMIT - 64);
+        padded.getUncompressed().writeZero(64);
+        assertRefused(channel, padded);
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void loginAboveTheLoginLimitIsRefused() {
+        EmbeddedChannel channel = new EmbeddedChannel(new PreAuthBatchLimiter(LIMIT, LOGIN_LIMIT, () -> false));
+        assertRefused(channel, singlePacketBatch(1, LOGIN_LIMIT + 1));
+        channel.finishAndReleaseAll();
     }
 
     @Test
