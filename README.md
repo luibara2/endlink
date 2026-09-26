@@ -5,11 +5,16 @@
 [![Licence](https://img.shields.io/github/license/luibara2/endlink)](LICENSE)
 [![Minecraft](https://img.shields.io/badge/Minecraft%20Bedrock-1.26.51-brightgreen)](https://github.com/luibara2/endlink#versions-run-the-latest-on-both-ends)
 
-A Velocity-style proxy for Minecraft: Bedrock with Endstone/BDS backends. Players stay connected to
-the proxy while switching between backend servers; the proxy owns authentication and forges offline
-logins to the backends.
+A Velocity-style proxy for Minecraft: Bedrock. Players stay connected to the proxy while switching
+between backend servers, keeping their session, identity and permissions; the proxy owns
+authentication and forges offline logins to the backends.
 
-By analogy: an Endstone server is Paper, and Endlink is Velocity.
+**Backends run on vanilla Bedrock Dedicated Server.** No plugin, no mod, no patched server — Endlink
+talks to BDS over the ordinary Bedrock protocol. [Endstone](https://github.com/EndstoneMC/endstone)
+works too and adds a plugin API, but it is a choice, not a requirement. See
+[Backends](#backends).
+
+By analogy: BDS is vanilla, Endstone is Paper, and Endlink is Velocity.
 
 ```
 java -jar Endlink.jar [config.properties]
@@ -85,8 +90,15 @@ On first start it writes a fully documented `config.properties` and creates a `p
 
 - **One connection, many servers.** Players switch backends without reconnecting, keeping their
   session, identity and permissions.
-- **The proxy owns authentication.** Backends run in offline mode behind it and are secured by
-  EndlinkGuard, which rejects any join that did not come through the proxy.
+- **Vanilla BDS backends.** Nothing is installed on the backend. A stock Bedrock Dedicated Server
+  with `online-mode=false`, reachable only by the proxy, is a complete backend. Player data —
+  inventory, scoreboard, position — carries across a switch; operator permissions do not, because an
+  offline-mode backend never sees a real XUID. See
+  [Operator permissions on the backend](#operator-permissions-on-the-backend).
+- **The proxy owns authentication.** Backends run in offline mode behind it, which is what lets one
+  session move between servers. That makes it the deployment's job to keep them unreachable from
+  outside — by network isolation, or by [EndlinkGuard](https://github.com/luibara2/endlinkguard) on
+  an Endstone backend. See [Keeping backends private](#keeping-backends-private).
 - **A version-translation layer** for the window where a backend lags a Minecraft release, through a
   registry of adjacent-version translators that chain across longer gaps. Read the note on versions
   below before relying on it.
@@ -112,6 +124,150 @@ On first start it writes a fully documented `config.properties` and creates a `p
   player data. Moving across that boundary reconnects them to the proxy rather than handing them
   over, for a reason that cannot be worked around; see
   [Minecraft: Java backends](#minecraft-java-backends).
+
+## Backends
+
+**Any server built on Bedrock Dedicated Server works, vanilla BDS included.** Endlink needs nothing
+installed on the backend to move a player into it — it connects as an ordinary Bedrock client and
+forges the login. What it needs from the backend is only this:
+
+1. **Offline mode.** `online-mode=false` in `server.properties`. The proxy has already authenticated
+   the player against Xbox Live and passes their real identity and XUID through; a backend that
+   re-authenticated would reject the forged login and break the handoff.
+2. **Unreachable except through the proxy.** A backend in offline mode will accept anyone who finds
+   its address. See below.
+3. **RakNet transport.** `transport=raknet` in `server.properties`. A fresh vanilla 1.26.5x BDS writes
+   `transport=nethernet`, logs "Accepting clients on [::]:<port>" and then opens no UDP socket Endlink
+   can reach, so the backend looks down: every join is "Unable to connect to backend". BDS 1.26.44
+   has no such setting; any server built on 1.26.5x BDS should be checked for it.
+
+Pick the backend server for the features you want, not for Endlink's sake:
+
+| Backend | When |
+| --- | --- |
+| **Vanilla BDS** | You want unmodified Minecraft behaviour and nothing to maintain. Fully supported. Requires network isolation, and operator permissions do not persist — see [Operator permissions on the backend](#operator-permissions-on-the-backend) |
+| **[Endstone](https://github.com/EndstoneMC/endstone)** | You want a plugin API, operator permissions that survive a switch, or [EndlinkGuard](https://github.com/luibara2/endlinkguard)'s join verification for backends you cannot close off at the network layer |
+| **Java server via [Geyser](https://geysermc.org)** | You have an existing Java server to offer alongside the Bedrock ones. See [Minecraft: Java backends](#minecraft-java-backends) |
+
+### Keeping backends private
+
+This is the one operational requirement Endlink cannot satisfy on its own. Offline mode is what
+makes a session portable between servers, and it also means an unprotected backend will let anyone
+in under any name. **Do not skip this.** There are two ways to close it, and either is sufficient on
+its own.
+
+#### Network isolation — works with vanilla BDS, nothing to install
+
+The direct approach: make the backend's port unreachable from anywhere except the proxy. BDS listens
+on all interfaces and has no bind-address setting, so this is done at the network layer rather than
+in `server.properties`.
+
+**Proxy and backends on the same machine.** Deny the backend ports at the firewall; loopback traffic
+from the proxy is unaffected.
+
+```bash
+# backends on 19133, 19134 — reachable from this machine only
+ufw deny 19133/udp
+ufw deny 19134/udp
+```
+
+**Backends on separate machines.** Allow only the proxy's address.
+
+```bash
+# on each backend host
+ufw allow from 10.0.0.5 to any port 19133 proto udp   # 10.0.0.5 = the proxy
+ufw deny 19133/udp
+```
+
+Or with iptables, if you prefer:
+
+```bash
+iptables -A INPUT -p udp --dport 19133 -s 10.0.0.5 -j ACCEPT
+iptables -A INPUT -p udp --dport 19133 -j DROP
+```
+
+**Docker.** Put the backends on an internal network with the proxy and simply do not publish their
+ports — no `ports:` entry for the backend services. Nothing else is needed.
+
+**Verify it.** From a machine that is not the proxy, add the backend's address directly in the
+Minecraft client's server list. It must fail to connect. If it lets you in, the backend is open.
+
+#### EndlinkGuard — verification without a firewall
+
+Some deployments cannot close the port: shared hosting that will not run a firewall for you, or
+backends on public addresses across providers. [EndlinkGuard](https://github.com/luibara2/endlinkguard)
+closes the gap in software instead — it verifies every join against the proxy over an HMAC-signed
+handshake and rejects the rest, so a direct connection to an exposed backend is refused.
+
+It also restores operator permissions on join, which offline-mode backends otherwise lose; that is a
+separate reason to run it even on backends you have already isolated. See
+[Operator permissions on the backend](#operator-permissions-on-the-backend).
+
+It runs as an Endstone plugin, so this route means running
+[Endstone](https://github.com/EndstoneMC/endstone) rather than vanilla BDS on those backends.
+Endstone is BDS with a plugin loader, so you keep full vanilla behaviour either way.
+
+Set `backendVerification.sharedSecret` here and `shared_secret` in EndlinkGuard's `config.toml` to
+the same value. Mismatch fails closed: proxied joins are rejected and both sides say so in the log.
+
+Nothing stops you mixing the two — isolated vanilla BDS backends and guarded Endstone backends can
+sit behind the same proxy.
+
+### Operator permissions on the backend
+
+Most player state survives a backend switch untouched — inventory, position, scoreboards and the
+rest of the world-side data. **Operator permissions are the exception**, and it is worth knowing why
+before you plan a network around it.
+
+Backends run in offline mode, so they never receive the player's real XUID. BDS keys
+`permissions.json` by XUID, so it has nothing to match a player against: an op'd player arriving
+through the proxy is not op on the backend. This is not something Endlink can fix by forwarding the
+XUID — an offline-mode backend does not accept one, and no amount of proxy-side work changes that.
+
+**On vanilla BDS**, the practical consequence is that backend-side op does not work through the
+proxy. Endlink's own `permissions.admins` still governs its commands (`/send`, `/alert`, `/glist`,
+`/perm`), so proxy administration is unaffected. If your backends are survival or minigame worlds
+where nobody needs op in play, this costs you nothing.
+
+**On Endstone with [EndlinkGuard](https://github.com/luibara2/endlinkguard)**, permissions persist.
+The plugin does not forward the XUID either — it cannot — but it re-applies the player's permissions
+on each join, which produces the behaviour you expect. If your backends need op'd players, this is
+the reason to run Endstone rather than vanilla BDS.
+
+### Minecraft: Java backends
+
+A backend can also be a **Java server**, reached through a [Geyser](https://geysermc.org) instance
+that the proxy treats as an ordinary Bedrock backend. Bedrock players join Endlink as usual and can
+be sent to it alongside the Bedrock ones. Install
+[EndlinkGuard's `geyser/` build](https://github.com/luibara2/endlinkguard) into that Geyser's
+`extensions/` folder — it does the same job there as the Endstone build does on a Bedrock backend,
+and additionally carries the player's real IP through to the Java server.
+
+Nothing in Endlink's config needs setting for this. There is one behaviour to know about:
+
+**Moving to or from a Java backend reconnects the player instead of handing them over.** A Bedrock
+client reads its block-id scheme from the StartGame it logs in with and cannot be told otherwise
+while it is playing. Bedrock servers hash block ids from the block state; Geyser numbers them by
+palette position. A seamless handoff across that boundary delivers chunks the client cannot decode —
+the player would stand in an empty or scrambled world with nothing in any log to say why.
+
+So Endlink learns each backend's scheme from its first StartGame, remembers it, and moves players
+across that boundary by transferring them back to **its own address** and putting them where they
+asked. The player never leaves the proxy: same listener, same identity check, same permissions, and
+backends stay unreachable from outside. They see a loading screen. Switches between backends of the
+same kind are seamless as before.
+
+A Bedrock backend that sends whole chunks, such as **PowerNukkitX**, needs no reconnect. BDS and
+Endstone have the client request terrain a sub-chunk at a time, and a client keeps that mode for its
+whole session, while a whole-chunk server never answers those requests. So for a player who met a BDS
+backend first, Endlink answers them itself: it takes each whole chunk apart, sends the client the
+biome-only chunk a BDS server would, and serves the sub-chunks from what it kept, holding any request
+that arrives before its chunk. Switches between BDS and PowerNukkitX are seamless both ways. Start the
+proxy with `-Dproxy.noSubChunkBridge=true` to reach such backends by reconnect instead.
+
+That transfer needs an address to send the client back to. By default the proxy uses whatever address
+each player connected with, which is correct per player and needs no configuration; set
+`publicAddress` when that is not good enough.
 
 ## Versions: run the latest, on both ends
 
@@ -150,8 +306,8 @@ is a real format change — thirteen packets moved and two are new — so it is 
 for one wire format, and the proxy translates across it in earnest rather than passing packets
 through.
 
-Endlink speaks 2193, so a 1.26.50 or 1.26.51 player reaches a 1.26.45, 1.26.44 or 1.26.40
-backend with nothing to configure. Leave `backend.protocol=auto` and it resolves the pair itself.
+Endlink speaks 2193, so a 1.26.50 or 1.26.51 player reaches a 1.26.45, 1.26.44 or 1.26.40 backend
+with nothing to configure. Leave `backend.protocol=auto` and it resolves the pair itself.
 
 **2192 was the preview's number, not the release's.** Mojang's dumps for Preview 26.50.27 and for
 stable 1.26.50.5 differ in two files: a README and the protocol number. Everything written against
@@ -207,7 +363,7 @@ The settings worth knowing before a first run:
 | Setting | Why |
 | --- | --- |
 | `backends` / `backend.<name>.host` | The servers players can be sent to |
-| `backendVerification.sharedSecret` | Must match EndlinkGuard's `shared_secret` on every backend |
+| `backendVerification.sharedSecret` | Only for backends running EndlinkGuard — must match its `shared_secret`. Leave unset when backends are isolated at the network layer instead |
 | `permissions.admins` | XUIDs allowed to run `/send`, `/alert`, `/glist`, `/perm` |
 | `commands.enabled` | Set `false` to disable all proxy command injection and handling, including qualified `/proxy:*` forms; backend commands are forwarded unchanged |
 | `backend.protocol` | Leave `auto` — it reads the version from the backend rather than trusting a pinned value |
@@ -216,58 +372,6 @@ The settings worth knowing before a first run:
 | `resourcePacks.dir` | Packs every client gets at login, as `.mcpack` files or unpacked folders |
 | `resourcePacks.cacheBackendPacks` | Learns each backend's packs into `cache/packs` and serves them itself, so packs work after a switch without copying them into the directory above. The first player to switch to an unlearned backend waits for one download. A pack edited on a backend is noticed and re-learned even when its `manifest.json` version does not change |
 | `crossBackendPalette` | Leave on if any backend has custom items or entities — it is what keeps them rendering after a switch. The proxy learns each backend's registry on the first visit and caches it in `cache/backend-palettes.nbt`; after an addon change, the first player there sees the old registry until they rejoin |
-
-## Backends
-
-**Use [Endstone](https://github.com/EndstoneMC/endstone) as the backend server, with
-[EndlinkGuard](https://github.com/luibara2/endlinkguard) installed on it.** That is the combination
-Endlink is built and tested against.
-
-Endstone is a plugin-capable server built on Bedrock Dedicated Server, which is what makes the
-backend side of this possible: EndlinkGuard needs to run code during the join to check it.
-
-EndlinkGuard is not optional in any real deployment. Endlink puts backends into offline mode so it
-can own authentication — that is what lets one session move between servers — and a backend in
-offline mode with nothing guarding it is open to anyone who learns its address. EndlinkGuard verifies
-every join against the proxy over an HMAC-signed handshake and rejects the rest.
-
-Set `backendVerification.sharedSecret` here and `shared_secret` in EndlinkGuard's `config.toml` to
-the same value. Mismatch fails closed: proxied joins are rejected and both sides say so in the log.
-
-### Minecraft: Java backends
-
-A backend can also be a **Java server**, reached through a [Geyser](https://geysermc.org) instance
-that the proxy treats as an ordinary Bedrock backend. Bedrock players join Endlink as usual and can
-be sent to it alongside the Bedrock ones. Install
-[EndlinkGuard's `geyser/` build](https://github.com/luibara2/endlinkguard) into that Geyser's
-`extensions/` folder — it does the same job there as the Endstone build does on a Bedrock backend,
-and additionally carries the player's real IP through to the Java server.
-
-Nothing in Endlink's config needs setting for this. There is one behaviour to know about:
-
-**Moving to or from a Java backend reconnects the player instead of handing them over.** A Bedrock
-client reads its block-id scheme from the StartGame it logs in with and cannot be told otherwise
-while it is playing. Bedrock servers hash block ids from the block state; Geyser numbers them by
-palette position. A seamless handoff across that boundary delivers chunks the client cannot decode —
-the player would stand in an empty or scrambled world with nothing in any log to say why.
-
-So Endlink learns each backend's scheme from its first StartGame, remembers it, and moves players
-across that boundary by transferring them back to **its own address** and putting them where they
-asked. The player never leaves the proxy: same listener, same identity check, same permissions, and
-backends stay unreachable from outside. They see a loading screen. Switches between backends of the
-same kind are seamless as before.
-
-A Bedrock backend that sends whole chunks, such as **PowerNukkitX**, needs no reconnect. BDS and
-Endstone have the client request terrain a sub-chunk at a time, and a client keeps that mode for its
-whole session, while a whole-chunk server never answers those requests. So for a player who met a BDS
-backend first, Endlink answers them itself: it takes each whole chunk apart, sends the client the
-biome-only chunk a BDS server would, and serves the sub-chunks from what it kept, holding any request
-that arrives before its chunk. Switches between BDS and PowerNukkitX are seamless both ways. Start the
-proxy with `-Dproxy.noSubChunkBridge=true` to reach such backends by reconnect instead.
-
-That transfer needs an address to send the client back to. By default the proxy uses whatever address
-each player connected with, which is correct per player and needs no configuration; set
-`publicAddress` when that is not good enough.
 
 ## Building
 
@@ -294,10 +398,10 @@ Or enable it once for good: `git config --global core.longpaths true`.
 
 | | |
 | --- | --- |
-| [EndlinkGuard](https://github.com/luibara2/endlinkguard) | The backend plugin. Verifies proxy joins and rejects direct ones — install it on every backend |
+| [EndlinkGuard](https://github.com/luibara2/endlinkguard) | Optional backend plugin. Verifies proxy joins and rejects direct ones — for backends you cannot close off at the network layer. Requires Endstone |
+| [Endstone](https://github.com/EndstoneMC/endstone) | Optional backend server: Bedrock Dedicated Server with a plugin API. Needed only for plugins or for EndlinkGuard |
 | [ViaEndlink](https://github.com/luibara2/viaendlink) | **Beta.** Optional addon for Minecraft: Java Edition *players* joining Bedrock backends. Joining, chat and terrain work; containers do not — read its status notice first |
 | [Geyser](https://geysermc.org) | Not an addon: run one in front of a Java *server* to offer it as a backend. See [Minecraft: Java backends](#minecraft-java-backends) |
-| [Endstone](https://github.com/EndstoneMC/endstone) | The recommended backend server: plugin-capable Bedrock Dedicated Server |
 
 ## Licence
 
@@ -310,7 +414,7 @@ It builds on Apache-2.0 work and keeps their notices:
 | --- | --- |
 | [CloudburstMC Protocol](https://github.com/CloudburstMC/Protocol) | Apache 2.0 — the Bedrock codecs, via a fork carrying additional hand-written ones |
 | [Netty](https://netty.io), [jose4j](https://bitbucket.org/b_c/jose4j) | Apache 2.0 |
-| [Endstone](https://github.com/EndstoneMC/endstone) | Apache 2.0 — the recommended backend server |
+| [Endstone](https://github.com/EndstoneMC/endstone) | Apache 2.0 — an optional backend server |
 
 **No GPL code is used here, deliberately.** Anything built on GPL-3.0 libraries lives in a separate
 addon rather than in this repository, so that Endlink itself can stay permissively licensed. Bundling
