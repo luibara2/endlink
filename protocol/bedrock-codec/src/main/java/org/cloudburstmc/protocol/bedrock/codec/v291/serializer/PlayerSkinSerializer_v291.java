@@ -35,7 +35,7 @@ public class PlayerSkinSerializer_v291 implements BedrockPacketSerializer<Player
         String skinId = helper.readString(buffer);
         packet.setNewSkinName(helper.readString(buffer));
         packet.setOldSkinName(helper.readString(buffer));
-        ImageData skinData = ImageData.of(helper.readByteArray(buffer, ImageData.SKIN_PERSONA_SIZE));
+        ImageData skinData = ImageData.of(helper.readByteArray(buffer, ImageData.MAX_SKIN_IMAGE_SIZE));
         ImageData capeData = ImageData.of(64, 32, helper.readByteArray(buffer, ImageData.SINGLE_SKIN_SIZE));
         String geometryName = helper.readString(buffer);
         String geometryData = helper.readString(buffer);

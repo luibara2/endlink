@@ -52,7 +52,7 @@ public class BedrockCodecHelper_v428 extends BedrockCodecHelper_v422 {
         String skinId = this.readString(buffer);
         String playFabId = this.readString(buffer); // new for v428
         String skinResourcePatch = this.readString(buffer);
-        ImageData skinData = this.readImage(buffer, ImageData.SKIN_PERSONA_SIZE);
+        ImageData skinData = this.readImage(buffer, ImageData.MAX_SKIN_IMAGE_SIZE);
 
         List<AnimationData> animations = new ObjectArrayList<>();
         this.readArray(buffer, animations, ByteBuf::readIntLE, (b, h) -> this.readAnimationData(b));

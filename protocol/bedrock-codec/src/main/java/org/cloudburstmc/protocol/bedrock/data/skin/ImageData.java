@@ -21,6 +21,14 @@ public class ImageData {
     public static final int SKIN_128_64_SIZE = 128 * 64 * PIXEL_SIZE;
     public static final int SKIN_128_128_SIZE = 128 * 128 * PIXEL_SIZE;
     public static final int SKIN_PERSONA_SIZE = 256 * 256 * PIXEL_SIZE;
+    /**
+     * Local delta: the largest skin image read off the wire, 10 MB. Upstream reads a skin against
+     * {@link #SKIN_PERSONA_SIZE} (256x256), but a marketplace or character-creator skin can be larger
+     * - a 512x256 one is 524288 bytes - and the client and BDS both accept it. Read against the
+     * smaller cap, the player list entry carrying it was dropped as unrepairable and the player
+     * vanished from everyone else's list and skin.
+     */
+    public static final int MAX_SKIN_IMAGE_SIZE = 10 * 1024 * 1024;
     public static final int ANIMATION_SIZE = 1024 * 1024 * PIXEL_SIZE; // 4 MB
 
     private final int width;

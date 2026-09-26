@@ -182,6 +182,41 @@ class PlayerListGuardTest {
                 .contains("geometry.humanoid.custom "), "geometry must not be truncated");
     }
 
+    @Test
+    void aSkinLargerThan256By256SurvivesTheRoundTrip() {
+        // A 512x256 marketplace skin: 524288 bytes, twice the upstream cap. It used to drop the
+        // player's entry as unrepairable, so everyone else lost them from the list.
+        byte[] pixels = new byte[512 * 256 * 4];
+        pixels[pixels.length - 1] = 7;
+        PlayerListPacket packet = new PlayerListPacket();
+        packet.setAction(PlayerListPacket.Action.ADD);
+        PlayerListPacket.Entry entry = new PlayerListPacket.Entry(UUID.randomUUID());
+        entry.setAction(PlayerListPacket.Action.ADD);
+        entry.setEntityId(1);
+        entry.setName("hotdog");
+        entry.setXuid("");
+        entry.setPlatformChatId("");
+        entry.setColor(new java.awt.Color(0, true));
+        entry.setSkin(org.cloudburstmc.protocol.bedrock.data.skin.SerializedSkin.builder()
+                .skinId("big")
+                .skinResourcePatch("{\"geometry\":{\"default\":\"geometry.humanoid.custom\"}}")
+                .skinData(org.cloudburstmc.protocol.bedrock.data.skin.ImageData.of(512, 256, pixels))
+                .geometryData("")
+                .build());
+        packet.getEntries().add(entry);
+        ByteBuf encoded = Unpooled.buffer();
+        try {
+            Bedrock_v2168.CODEC.tryEncode(Bedrock_v2168.CODEC.createHelper(), encoded, packet);
+            PlayerListPacket decoded = (PlayerListPacket) Bedrock_v2168.CODEC.tryDecode(
+                    Bedrock_v2168.CODEC.createHelper(), encoded, PACKET_ID);
+            assertEquals(1, decoded.getEntries().size(), "the entry is kept");
+            assertEquals(512, decoded.getEntries().get(0).getSkin().getSkinData().getWidth());
+            assertArrayEquals(pixels, decoded.getEntries().get(0).getSkin().getSkinData().getImage());
+        } finally {
+            encoded.release();
+        }
+    }
+
     private static PlayerListPacket decode(String hex) {
         ByteBuf buffer = Unpooled.wrappedBuffer(ByteBufUtil.decodeHexDump(hex));
         try {
