@@ -46,6 +46,7 @@ import org.endstone.proxy.palette.ItemPaletteMapping;
 import org.cloudburstmc.protocol.bedrock.packet.LevelChunkPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LevelSoundEventPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LocatorBarPacket;
+import org.cloudburstmc.protocol.bedrock.packet.MobEffectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MoveEntityAbsolutePacket;
 import org.cloudburstmc.protocol.bedrock.packet.MoveEntityDeltaPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket;
@@ -3463,6 +3464,11 @@ public final class BackendRelayPacketHandler implements BedrockPacketHandler {
             blockSynced.setRuntimeEntityId(toClientRuntime(blockSynced.getRuntimeEntityId(), false));
         } else if (packet instanceof UpdateAttributesPacket attributes) {
             attributes.setRuntimeEntityId(toClientRuntime(attributes.getRuntimeEntityId(), false));
+        } else if (packet instanceof MobEffectPacket effect) {
+            // Effects name the player by the id the current backend gave them. Left alone, every
+            // effect after a switch - a potion, a beacon, a server's night vision - addresses an
+            // entity the client has never heard of and is dropped.
+            effect.setRuntimeEntityId(toClientRuntime(effect.getRuntimeEntityId(), false));
         } else if (packet instanceof EntityEventPacket entityEvent) {
             entityEvent.setRuntimeEntityId(toClientRuntime(entityEvent.getRuntimeEntityId(), false));
         } else if (packet instanceof EntityFallPacket entityFall) {

@@ -3,6 +3,7 @@ package org.endstone.proxy.backend;
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityLinkData;
 import org.cloudburstmc.protocol.bedrock.packet.BossEventPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
+import org.cloudburstmc.protocol.bedrock.packet.MobEffectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetEntityLinkPacket;
 import org.endstone.proxy.auth.AuthData;
 import org.endstone.proxy.auth.ClientLogin;
@@ -68,11 +69,39 @@ final class BackendRelayUniqueIdTest {
         assertEquals(0.25f, linkPacket.getEntityLink().getVehicleAngularVelocity());
     }
 
+    @Test
+    void rewritesTheLocalPlayersEffectsAfterABackendSwitch() {
+        long clientRuntimeId = 1L;
+        long backendRuntimeId = 88L;
+        long otherEntity = 4_242L;
+        ProxyConnection connection = connection();
+        connection.setBackendPlayerRuntimeEntityId(clientRuntimeId);
+        connection.setBackendPlayerRuntimeEntityId(backendRuntimeId);
+        BackendRelayPacketHandler handler = handlerFor(connection);
+
+        MobEffectPacket own = new MobEffectPacket();
+        own.setRuntimeEntityId(backendRuntimeId);
+        own.setEvent(MobEffectPacket.Event.ADD);
+        own.setEffectId(16);
+        handler.rewriteClientboundRuntimeIds(own);
+        assertEquals(clientRuntimeId, own.getRuntimeEntityId());
+
+        MobEffectPacket other = new MobEffectPacket();
+        other.setRuntimeEntityId(otherEntity);
+        other.setEvent(MobEffectPacket.Event.ADD);
+        handler.rewriteClientboundRuntimeIds(other);
+        assertEquals(otherEntity, other.getRuntimeEntityId());
+    }
+
     private static BackendRelayPacketHandler handlerAfterSwitch() {
         ProxyConnection connection = connection();
         connection.setBackendPlayerUniqueEntityId(CLIENT_PLAYER_ID);
         connection.setBackendPlayerUniqueEntityId(BACKEND_PLAYER_ID);
         assertEquals(CLIENT_PLAYER_ID, connection.clientPlayerUniqueEntityId());
+        return handlerFor(connection);
+    }
+
+    private static BackendRelayPacketHandler handlerFor(ProxyConnection connection) {
         return new BackendRelayPacketHandler(
                 connection,
                 null,
