@@ -965,14 +965,8 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
     }
 
     private void handleCrossProtocolCameraAimAssistInstruction(CameraAimAssistInstructionPacket instruction) {
+        // Sent every tick by some backends, so nothing here logs.
         if (!connection.hasForwardedLevelChunk()) {
-            System.out.printf(
-                    "Consumed early cross-protocol camera aim-assist instruction from %s before chunks: action=%s presetId=%s allow=%s.%n",
-                    connection.client().getSocketAddress(),
-                    instruction.getAction(),
-                    instruction.getPresetId(),
-                    instruction.isAllowAimAssist()
-            );
             return;
         }
 
@@ -984,13 +978,6 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
         response.setTargetMode(CameraAimAssistPacket.TargetMode.ANGLE);
         response.setShowDebugRender(false);
         connection.client().sendPacket(response);
-        System.out.printf(
-                "Handled cross-protocol camera aim-assist instruction locally for %s: action=%s presetId=%s allow=%s.%n",
-                connection.client().getSocketAddress(),
-                instruction.getAction(),
-                instruction.getPresetId(),
-                instruction.isAllowAimAssist()
-        );
     }
 
     private boolean handleSyntheticClientChunkBlobStatus(ClientCacheBlobStatusPacket blobStatus) {
