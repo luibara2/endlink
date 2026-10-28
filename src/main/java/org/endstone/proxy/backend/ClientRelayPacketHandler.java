@@ -1042,7 +1042,14 @@ public final class ClientRelayPacketHandler implements BedrockPacketHandler {
                  "PartyChangedPacket",
                  "ServerboundDataDrivenScreenClosedPacket",
                  "SetPlayerFurnaceOptionsPacket",
-                 "ServerboundDiagnosticsPacket" -> true;
+                 "ServerboundDiagnosticsPacket",
+                 // New at 1.26.60 and sent by its clients; no older backend codec has an id for them.
+                 // SetPassengerOfBlockPacket goes both ways, so it is here as well as clientbound-only.
+                 "ServerboundStonecutterSetRecipePacket",
+                 "ServerboundMatchmakingCancelPacket",
+                 "ServerboundCursorItemDragPacket",
+                 "ServerboundRegisterAudioContentPacket",
+                 "SetPassengerOfBlockPacket" -> true;
             default -> false;
         };
     }

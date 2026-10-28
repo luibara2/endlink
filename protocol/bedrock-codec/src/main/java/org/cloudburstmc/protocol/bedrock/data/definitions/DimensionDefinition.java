@@ -27,4 +27,34 @@ public class DimensionDefinition {
      * @since v2192
      */
     String defaultBiome;
+    /**
+     * @since v2225
+     */
+    int cloudHeight;
+    /**
+     * @since v2225
+     */
+    boolean renderClouds;
+
+    public DimensionDefinition(String id, int maximumHeight, int minimumHeight, int generatorType, int dimensionType,
+                               UUID packId, String defaultBiome, int cloudHeight, boolean renderClouds) {
+        this.id = id;
+        this.maximumHeight = maximumHeight;
+        this.minimumHeight = minimumHeight;
+        this.generatorType = generatorType;
+        this.dimensionType = dimensionType;
+        this.packId = packId;
+        this.defaultBiome = defaultBiome;
+        this.cloudHeight = cloudHeight;
+        this.renderClouds = renderClouds;
+    }
+
+    /**
+     * The constructor as it was before 1.26.60 added the two cloud fields, kept so that addons and
+     * tests built against it still compile. The clouds read as absent: height 0, not rendered.
+     */
+    public DimensionDefinition(String id, int maximumHeight, int minimumHeight, int generatorType, int dimensionType,
+                               UUID packId, String defaultBiome) {
+        this(id, maximumHeight, minimumHeight, generatorType, dimensionType, packId, defaultBiome, 0, false);
+    }
 }

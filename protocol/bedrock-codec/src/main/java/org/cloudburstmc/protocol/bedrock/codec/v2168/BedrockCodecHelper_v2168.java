@@ -600,6 +600,44 @@ public class BedrockCodecHelper_v2168 extends BedrockCodecHelper_v975 {
         }
     }
 
+    /**
+     * A persona piece type from its wire value.
+     *
+     * <p>1.26.60 inserted {@code CoCo} at 28, ahead of {@code Unsupported}, and
+     * {@link PersonaPieceType#COCO} sits at that spot in the enum so that 1.26.60's numbering is the
+     * plain ordinal. Before it, 28 is {@code Unsupported}: reading by ordinal would turn an older
+     * peer's unsupported piece into a CoCo one, and writing by ordinal would send it 29, which it has
+     * no member for.
+     */
+    protected PersonaPieceType personaPieceType(int id) {
+        int coco = PersonaPieceType.COCO.ordinal();
+        return PersonaPieceType.values()[id >= coco ? id + 1 : id];
+    }
+
+    protected int personaPieceTypeId(PersonaPieceType type) {
+        int ordinal = type.ordinal();
+        int coco = PersonaPieceType.COCO.ordinal();
+        if (ordinal == coco) {
+            return PersonaPieceType.UNSUPPORTED.ordinal() - 1;
+        }
+        return ordinal > coco ? ordinal - 1 : ordinal;
+    }
+
+    /**
+     * BDS's own enum value for {@code type}, which is what the "Action type" byte below must carry.
+     *
+     * <p>1.26.60 inserted {@code CraftReservedAction} at 18, ahead of the two deprecated craft
+     * actions, and {@link ItemStackRequestActionType#RESERVED} sits at that spot in the enum so that
+     * 1.26.60's numbering is the plain ordinal. No earlier version has the member, so from it onward
+     * their value is one less: {@code CraftNonImplemented} 18 and {@code CraftResults} 19, read from
+     * Mojang's dumps for both releases. A wrong value is rejected at TERMINATING_CONNECTION, and
+     * {@code CRAFT_RESULTS_DEPRECATED} rides along with every craft a client makes.
+     */
+    protected int actionTypeValue(ItemStackRequestActionType type) {
+        int ordinal = type.ordinal();
+        return ordinal > ItemStackRequestActionType.RESERVED.ordinal() ? ordinal - 1 : ordinal;
+    }
+
     @Override
     protected void writeRequestActionData(ByteBuf byteBuf, ItemStackRequestAction action) {
         // NOT a repeat of the varint selector in front of it, however much it looks like one. The two
@@ -619,7 +657,7 @@ public class BedrockCodecHelper_v2168 extends BedrockCodecHelper_v975 {
         // malformed auto-craft got as far as `wrong const value for member "Descriptor Type"` deep
         // inside the ingredients, and with the TypeMap id the same packet failed earlier and harder
         // at `"Action type"`, taking PlayerAuthInput (which embeds a request) down with it.
-        byteBuf.writeByte(action.getType().ordinal());
+        byteBuf.writeByte(actionTypeValue(action.getType()));
 
         switch (action.getType()) {
             case TAKE:
@@ -698,6 +736,10 @@ public class BedrockCodecHelper_v2168 extends BedrockCodecHelper_v975 {
             case CRAFT_RESULTS_DEPRECATED:
                 this.writeArray(byteBuf, ((CraftResultsDeprecatedAction) action).getResultItems(), this::writeItemStackRequestNetworkItemInstanceDescriptor);
                 byteBuf.writeByte(((CraftResultsDeprecatedAction) action).getTimesCrafted());
+                break;
+            case RESERVED:
+                writeString(byteBuf, ((CraftReservedAction) action).getReservedId());
+                byteBuf.writeByte(((CraftReservedAction) action).getNumCrafts());
                 break;
             default:
                 throw new IllegalArgumentException("got " + action.getType());
@@ -790,6 +832,11 @@ public class BedrockCodecHelper_v2168 extends BedrockCodecHelper_v975 {
                         this.readArray(byteBuf, new ItemData[0], this::readItemStackRequestNetworkItemInstanceDescriptor),
                         byteBuf.readUnsignedByte()
                 );
+            case RESERVED:
+                return new CraftReservedAction(
+                        readString(byteBuf),
+                        byteBuf.readUnsignedByte()
+                );
             default:
                 throw new IllegalArgumentException("got " + type);
         }
@@ -846,7 +893,7 @@ public class BedrockCodecHelper_v2168 extends BedrockCodecHelper_v975 {
         List<PersonaPieceData> personaPieces = new ObjectArrayList<>();
         this.readArray(buffer, personaPieces, (buf, h) -> {
             String pieceId = this.readString(buf);
-            PersonaPieceType pieceType = PersonaPieceType.values()[buf.readIntLE()];
+            PersonaPieceType pieceType = personaPieceType(buf.readIntLE());
             UUID packId = this.readUuid(buf);
             boolean isDefault = buf.readBoolean();
             String productId = this.readString(buf);
@@ -906,7 +953,7 @@ public class BedrockCodecHelper_v2168 extends BedrockCodecHelper_v975 {
         VarInts.writeUnsignedInt(buffer, pieces.size());
         for (PersonaPieceData piece : pieces) {
             this.writeString(buffer, piece.getId());
-            buffer.writeIntLE(piece.getPieceType().ordinal());
+            buffer.writeIntLE(personaPieceTypeId(piece.getPieceType()));
             this.writeUuid(buffer, piece.getPackUuid());
             buffer.writeBoolean(piece.isDefault());
             this.writeString(buffer, piece.getProductId());

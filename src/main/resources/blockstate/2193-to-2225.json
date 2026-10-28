@@ -1,0 +1,295 @@
+{
+  "fromProtocol": 2193,
+  "toProtocol": 2225,
+  "source": "Mojang/bedrock-samples metadata/vanilladata_modules/mojang-blocks.json, v1.26.50.4 -> v1.26.60.30-preview (protocol 2225, the number 1.26.60.6 shipped with)",
+  "groups": [
+    {
+      "blocks": [
+        "minecraft:chorus_plant"
+      ],
+      "oldStates": [],
+      "added": [
+        {
+          "name": "minecraft:connection_down",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ],
+          "default": false
+        },
+        {
+          "name": "minecraft:connection_east",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ],
+          "default": false
+        },
+        {
+          "name": "minecraft:connection_north",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ],
+          "default": false
+        },
+        {
+          "name": "minecraft:connection_south",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ],
+          "default": false
+        },
+        {
+          "name": "minecraft:connection_up",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ],
+          "default": false
+        },
+        {
+          "name": "minecraft:connection_west",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ],
+          "default": false
+        }
+      ]
+    },
+    {
+      "blocks": [
+        "minecraft:fire"
+      ],
+      "oldStates": [
+        {
+          "name": "age",
+          "type": "int",
+          "values": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ]
+        }
+      ],
+      "added": [
+        {
+          "name": "minecraft:connection_east",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ],
+          "default": false
+        },
+        {
+          "name": "minecraft:connection_north",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ],
+          "default": false
+        },
+        {
+          "name": "minecraft:connection_south",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ],
+          "default": false
+        },
+        {
+          "name": "minecraft:connection_up",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ],
+          "default": false
+        },
+        {
+          "name": "minecraft:connection_west",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ],
+          "default": false
+        }
+      ]
+    },
+    {
+      "blocks": [
+        "minecraft:powered_repeater",
+        "minecraft:unpowered_repeater"
+      ],
+      "oldStates": [
+        {
+          "name": "minecraft:cardinal_direction",
+          "type": "string",
+          "values": [
+            "south",
+            "west",
+            "north",
+            "east"
+          ]
+        },
+        {
+          "name": "repeater_delay",
+          "type": "int",
+          "values": [
+            0,
+            1,
+            2,
+            3
+          ]
+        }
+      ],
+      "added": [
+        {
+          "name": "locked",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ],
+          "default": false
+        }
+      ]
+    },
+    {
+      "blocks": [
+        "minecraft:redstone_wire"
+      ],
+      "oldStates": [
+        {
+          "name": "redstone_signal",
+          "type": "int",
+          "values": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ]
+        }
+      ],
+      "added": [
+        {
+          "name": "redstone_east",
+          "type": "string",
+          "values": [
+            "none",
+            "side",
+            "up"
+          ],
+          "default": "none"
+        },
+        {
+          "name": "redstone_north",
+          "type": "string",
+          "values": [
+            "none",
+            "side",
+            "up"
+          ],
+          "default": "none"
+        },
+        {
+          "name": "redstone_south",
+          "type": "string",
+          "values": [
+            "none",
+            "side",
+            "up"
+          ],
+          "default": "none"
+        },
+        {
+          "name": "redstone_west",
+          "type": "string",
+          "values": [
+            "none",
+            "side",
+            "up"
+          ],
+          "default": "none"
+        }
+      ]
+    },
+    {
+      "blocks": [
+        "minecraft:scaffolding"
+      ],
+      "oldStates": [
+        {
+          "name": "stability",
+          "type": "int",
+          "values": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        },
+        {
+          "name": "stability_check",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ]
+        }
+      ],
+      "added": [
+        {
+          "name": "bottom",
+          "type": "bool",
+          "values": [
+            false,
+            true
+          ],
+          "default": false
+        }
+      ]
+    }
+  ]
+}

@@ -85,4 +85,20 @@ public enum ContainerSlotType {
      * @since v944
      */
     RECIPE_FURNACE_ITEMS_CONTAINER,
+    /**
+     * @since v2225
+     */
+    RESERVED_CONTAINER_A,
+    /**
+     * @since v2225
+     */
+    RESERVED_CONTAINER_B,
+    /**
+     * @since v2225
+     */
+    RESERVED_CONTAINER_C,
+    /**
+     * @since v2225
+     */
+    RESERVED_CONTAINER_D,
 }

@@ -57,16 +57,30 @@ public final class BlockStateTranslation {
         this.blockJoins = new BlockJoinPass(joins, faces);
     }
 
+    /**
+     * A step that only renumbers: every added property takes the table's default, and no pass works
+     * out a neighbour-dependent state on the way up. The stair and fence passes above exist because
+     * 1.26.50 made those shapes part of the block state; a step that adds nothing of the kind, or
+     * whose new states are not worth inventing, needs neither.
+     */
+    public BlockStateTranslation(BlockStateUpgrade upgrade) {
+        this.upgrade = upgrade;
+        this.toNewer = upgrade::toNewer;
+        this.toOlder = upgrade::toOlder;
+        this.stairCorners = null;
+        this.blockJoins = null;
+    }
+
     public BlockStateUpgrade upgrade() {
         return upgrade;
     }
 
-    /** The stair corner pass, for the relay to read a finished chunk back with. */
+    /** The stair corner pass, for the relay to read a finished chunk back with; null on a renumber-only step. */
     public StairCornerPass stairCorners() {
         return stairCorners;
     }
 
-    /** The fence, pane and bar pass, for the relay to read a finished chunk back with. */
+    /** The fence, pane and bar pass, for the relay to read a finished chunk back with; null on a renumber-only step. */
     public BlockJoinPass blockJoins() {
         return blockJoins;
     }
@@ -75,9 +89,14 @@ public final class BlockStateTranslation {
      * Whether a client on {@code clientProtocol} talking to a backend on {@code backendProtocol} is
      * the pairing this table carries blocks <em>up</em> for, which is the only one whose stair
      * corners have to be invented.
+     *
+     * <p>"At or above" the table's newer protocol, not equal to it. The client's number is not the
+     * table's whenever a release renumbers past it: 2193 shipped where the 1.26.50 table says 2192,
+     * and 2225 sits on top of both, and in either case the chain still carries the blocks up through
+     * this table, so the shapes it invents still have seams to settle.
      */
     public boolean upgradesFor(int clientProtocol, int backendProtocol) {
-        return clientProtocol == upgrade.toProtocol() && backendProtocol <= upgrade.fromProtocol();
+        return clientProtocol >= upgrade.toProtocol() && backendProtocol <= upgrade.fromProtocol();
     }
 
     /** Renumber towards the newer version. */
@@ -138,7 +157,7 @@ public final class BlockStateTranslation {
      * click, and reported once with the rest of the census.
      */
     private void noteClientBlock(BlockDefinition definition) {
-        if (definition != null) {
+        if (definition != null && blockJoins != null) {
             blockJoins.describeFromClient(definition.getRuntimeId());
         }
     }
@@ -150,7 +169,7 @@ public final class BlockStateTranslation {
             return;
         }
         setData(chunk, SubChunkPaletteRewriter.rewrite(chunk.getData(), chunk.getSubChunksLength(), map));
-        if (map == toNewer) {
+        if (map == toNewer && stairCorners != null) {
             // Only on the way up. Going down, the corner and the arms are being dropped rather than
             // invented, and the older client works both out for itself as it always did.
             setData(chunk, stairCorners.apply(chunk.getData(), chunk.getSubChunksLength()));
@@ -184,7 +203,7 @@ public final class BlockStateTranslation {
                 data.release();
                 data = rewritten;
             }
-            if (map == toNewer) {
+            if (map == toNewer && stairCorners != null) {
                 ByteBuf cornered = stairCorners.apply(data, 1);
                 if (cornered != null) {
                     subChunk.setData(cornered);

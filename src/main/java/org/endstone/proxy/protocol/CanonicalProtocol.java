@@ -9,6 +9,7 @@ import org.cloudburstmc.protocol.bedrock.codec.v1001.Bedrock_v1001;
 import org.cloudburstmc.protocol.bedrock.codec.v2168.Bedrock_v2168;
 import org.cloudburstmc.protocol.bedrock.codec.v2169.Bedrock_v2169;
 import org.cloudburstmc.protocol.bedrock.codec.v2193.Bedrock_v2193;
+import org.cloudburstmc.protocol.bedrock.codec.v2225.Bedrock_v2225;
 
 import java.util.Optional;
 
@@ -48,7 +49,12 @@ public enum CanonicalProtocol {
     // selects the right codec instead of failing startup. Widen it again the same way: read the
     // dump, do not extrapolate the run of hotfixes. 1.26.45 renumbered mid-line after four
     // releases had not, and a wrong codec is a bad join rather than a clear error.
-    V1_26_50(Bedrock_v2193.CODEC, "1.26.51");
+    V1_26_50(Bedrock_v2193.CODEC, "1.26.51"),
+    // 1.26.60 shipped as 1.26.60.6 with protocol 2225, the same number its last preview (26.60.30)
+    // asked for, so unlike 1.26.50 nothing renumbered on the way to stable: EndstoneMC/protocol-docs
+    // r26_u6 reads 2225 from the stable server's own RequestNetworkSettingsPacket constraint. It
+    // claims that one release and no more, for the reason the line above gives.
+    V1_26_60(Bedrock_v2225.CODEC);
 
     private final BedrockCodec codec;
 

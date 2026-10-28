@@ -64,7 +64,7 @@ class CanonicalProtocolReleaseTest {
 
     @Test
     void stillRefusesAReleaseNoCodecSpeaks() {
-        assertThrows(IllegalArgumentException.class, () -> CanonicalProtocol.fromConfig("1.26.60"));
+        assertThrows(IllegalArgumentException.class, () -> CanonicalProtocol.fromConfig("1.26.70"));
         assertThrows(IllegalArgumentException.class, () -> CanonicalProtocol.fromConfig("nonsense"));
     }
 
@@ -161,11 +161,19 @@ class CanonicalProtocolReleaseTest {
     }
 
     @Test
-    void theProxyNowAdvertisesTheRenumberedRelease() {
-        // newest() is what the server list shows and what a client is matched against, so a 2193
+    void theProxyAdvertisesTheNewestRelease() {
+        // newest() is what the server list shows and what a client is matched against, so a 2225
         // client is only reachable if this moved with the new codec.
-        assertEquals(CanonicalProtocol.V1_26_50, CanonicalProtocol.newest());
-        assertEquals(2193, CanonicalProtocol.newest().protocolVersion());
+        assertEquals(CanonicalProtocol.V1_26_60, CanonicalProtocol.newest());
+        assertEquals(2225, CanonicalProtocol.newest().protocolVersion());
+    }
+
+    @Test
+    void acceptsTheReleaseThatShippedAs2225() {
+        assertEquals(CanonicalProtocol.V1_26_60, CanonicalProtocol.fromConfig("1.26.60"));
+        assertEquals(CanonicalProtocol.V1_26_60, CanonicalProtocol.fromConfig("2225"));
+        assertEquals(CanonicalProtocol.V1_26_60, CanonicalProtocol.fromConfig("26.60"));
+        assertThrows(IllegalArgumentException.class, () -> CanonicalProtocol.fromConfig("1.26.61"));
     }
 
     @Test

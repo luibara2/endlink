@@ -70,7 +70,11 @@ public final class ProtocolRegistry {
                 .codec(CanonicalProtocol.V1_26_40)
                 .codec(CanonicalProtocol.V1_26_45)
                 .codec(CanonicalProtocol.V1_26_50)
+                .codec(CanonicalProtocol.V1_26_60)
                 // Directed adjacent translators (newer -> older). Longer gaps are auto-chained.
+                // 2225 -> 2193 is the 1.26.60 step: seven packets reshaped, eight added, and six
+                // vanilla blocks given new properties. See ModernClientTo2193Translator.
+                .edge(CanonicalProtocol.V1_26_60, CanonicalProtocol.V1_26_50, ModernClientTo2193Translator.INSTANCE)
                 // 2193 -> 2169 is a real format step, not the renumbering the one below it is: the
                 // codecs reshape thirteen packets across it and the pairing is isCrossProtocol().
                 // It still rewrites nothing itself, because each leg's codec writes its own shape --

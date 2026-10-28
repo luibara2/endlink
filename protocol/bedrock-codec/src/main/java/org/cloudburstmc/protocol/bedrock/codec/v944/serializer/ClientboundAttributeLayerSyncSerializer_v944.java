@@ -190,7 +190,7 @@ public class ClientboundAttributeLayerSyncSerializer_v944 implements BedrockPack
 
         CameraEase easing = CameraEase.fromName(helper.readString(buf));
 
-        return new EnvironmentAttributeData(name, from, attribute, to, currentTicks, totalTicks, easing, 0, false, null);
+        return new EnvironmentAttributeData(name, from, attribute, to, currentTicks, totalTicks, easing, null, 0, false, null, null);
     }
 
     private static final List<String> BOOL_OPERATIONS = Arrays.asList("override", "alpha_blend", "and", "nand", "or", "nor", "xor", "xnor");
