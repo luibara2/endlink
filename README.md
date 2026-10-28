@@ -3,7 +3,7 @@
 [![Build](https://github.com/luibara2/endlink/actions/workflows/build.yml/badge.svg)](https://github.com/luibara2/endlink/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/luibara2/endlink?include_prereleases&sort=semver)](https://github.com/luibara2/endlink/releases)
 [![Licence](https://img.shields.io/github/license/luibara2/endlink)](LICENSE)
-[![Minecraft](https://img.shields.io/badge/Minecraft%20Bedrock-1.26.51-brightgreen)](https://github.com/luibara2/endlink#versions-run-the-latest-on-both-ends)
+[![Minecraft](https://img.shields.io/badge/Minecraft%20Bedrock-1.26.60-brightgreen)](https://github.com/luibara2/endlink#versions-run-the-latest-on-both-ends)
 
 A Velocity-style proxy for Minecraft: Bedrock. Players stay connected to the proxy while switching
 between backend servers, keeping their session, identity and permissions; the proxy owns
@@ -29,7 +29,13 @@ On first start it writes a fully documented `config.properties` and creates a `p
 > join, play, and switch between backends keeping their session, identity and permissions. That has
 > run a live server at around ten concurrent players.
 >
-> **New in v0.5.4: BDS to PowerNukkitX without the reconnect.** v0.5.3 reached a PowerNukkitX
+> **New in v0.5.5: Minecraft 1.26.60, played on.** 1.26.60 renumbered the protocol to 2225 and gave
+> six blocks new properties: chorus plant, fire, both repeaters, redstone wire and scaffolding.
+> Endlink speaks 2225 and translates down to 1.26.50 and older backends, renumbering those blocks so
+> a 1.26.60 player does not see them as air. Tested with a real 1.26.60 client against vanilla BDS
+> 1.26.60.6 and against 1.26.44 backends.
+>
+> **In v0.5.4: BDS to PowerNukkitX without the reconnect.** v0.5.3 reached a PowerNukkitX
 > backend by sending the player round a reconnect. Endlink now answers the client's sub-chunk
 > requests itself: it takes each whole chunk PowerNukkitX sends apart, gives the client the
 > biome-only chunk a BDS server would, and serves the sub-chunks from what it kept, so switches
@@ -298,6 +304,22 @@ way through. Leave `backend.protocol=auto` and it resolves the pair on its own.
 
 This is the supported short-term gap, not a reason to stay on 1.26.44 — move the backends up when
 their server software does.
+
+### 1.26.60 clients on older backends
+
+Minecraft 1.26.60 renumbered the protocol to 2225. Seven packets changed shape and eight are new.
+Endlink speaks 2225, so a 1.26.60 player reaches a 1.26.51, 1.26.45, 1.26.44 or 1.26.40 backend with
+nothing to configure. Leave `backend.protocol=auto` and it resolves the pair itself.
+
+**Six blocks are translated.** 1.26.60 added properties to chorus plant and fire (connection faces),
+both repeaters (`locked`), redstone wire (its four sides) and scaffolding (`bottom`). Endlink
+renumbers them in the chunk data in both directions from a table diffed out of Mojang's block
+metadata. Each added property takes its neutral value on the way up, so redstone wire from an older
+backend draws as a dot rather than a line and fire burns on the floor. The blocks are visible and
+solid, but not in the shapes a 1.26.60 server would give them.
+
+**Only this direction.** There is no edge from older clients to a 1.26.60 backend. Clients update
+themselves, so once the backends move to 1.26.60 every player is expected to be on it already.
 
 ### 1.26.50 clients on older backends
 
