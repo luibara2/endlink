@@ -29,7 +29,13 @@ On first start it writes a fully documented `config.properties` and creates a `p
 > join, play, and switch between backends keeping their session, identity and permissions. That has
 > run a live server at around ten concurrent players.
 >
-> **New in v0.5.5: Minecraft 1.26.60, played on.** 1.26.60 renumbered the protocol to 2225 and gave
+> **New in v0.5.6: NetherNet, so 1.26.60 players can join again.** 1.26.60 clients stopped opening
+> RakNet sessions to dedicated servers and failed with "Terracotta". Endlink now also accepts them
+> over NetherNet (WebRTC): an HTTP(S) join on TCP `listener.port` and gameplay on UDP
+> `listener.port + 8`, beside RakNet for older clients. Backends stay on RakNet. Tested with a real
+> 1.26.60 client against a live 1.26.40 network.
+>
+> **In v0.5.5: Minecraft 1.26.60, played on.** 1.26.60 renumbered the protocol to 2225 and gave
 > six blocks new properties: chorus plant, fire, both repeaters, redstone wire and scaffolding.
 > Endlink speaks 2225 and translates down to 1.26.50 and older backends, renumbering those blocks so
 > a 1.26.60 player does not see them as air. Tested with a real 1.26.60 client against vanilla BDS
