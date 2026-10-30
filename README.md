@@ -390,6 +390,7 @@ The settings worth knowing before a first run:
 | `commands.enabled` | Set `false` to disable all proxy command injection and handling, including qualified `/proxy:*` forms; backend commands are forwarded unchanged |
 | `backend.protocol` | Leave `auto` — it reads the version from the backend rather than trusting a pinned value |
 | `network.udp.*BufferBytes` | Kernel buffers for the shared listener and backend sockets. Endlink warns when the OS caps them; on Linux, raise `net.core.rmem_max` / `net.core.wmem_max` above the configured values to avoid RakNet retransmission stalls under bursts |
+| `nethernet.*` | Bedrock 1.26.60+ clients join over NetherNet (WebRTC), not RakNet. Endlink serves its signaling over HTTP(S) on TCP `listener.port` and its media on UDP `nethernet.icePort` (default `listener.port + 8`). Open both in the firewall besides UDP `listener.port`, and keep `nethernet-identity.pem`: clients pin that operator key |
 | `publicAddress` | Only for networks with a Java backend: the address players are sent back to when a move needs a reconnect. Empty uses the address each player connected with, which is usually right |
 | `resourcePacks.dir` | Packs every client gets at login, as `.mcpack` files or unpacked folders |
 | `resourcePacks.cacheBackendPacks` | Learns each backend's packs into `cache/packs` and serves them itself, so packs work after a switch without copying them into the directory above. The first player to switch to an unlearned backend waits for one download. A pack edited on a backend is noticed and re-learned even when its `manifest.json` version does not change |
@@ -404,7 +405,7 @@ gradle build
 ```
 
 `dist/Endlink.jar` is the deployable artifact. `gradle test` runs the suite. Nothing else is needed —
-the Bedrock codecs and the RakNet transport are vendored under `protocol/` and `network/`, so a fresh
+the Bedrock codecs and the RakNet and NetherNet transports are vendored under `protocol/` and `network/`, so a fresh
 clone builds on its own.
 
 **On Windows, clone with long paths enabled.** The vendored codecs nest deeply enough to exceed the

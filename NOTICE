@@ -45,7 +45,28 @@ the modifications carried here are:
     disconnection notification. Upstream only records the reason, so a client
     connection the server had already closed stayed open until it timed out.
 
+  * Replaced network/transport-nethernet with CloudburstMC Network's current
+    NetherNet transport (https://github.com/CloudburstMC/Network, branch
+    nethernet, with transport-common), which adds the HTTP signaling Bedrock
+    1.26.60+ clients use for dedicated servers.
+
+  * Channels without RakNet framing are treated as RakNet protocol 11 without
+    the 0xFE frame id (UnframedBatchCodec), and Bedrock encryption stays off on
+    them since the transport is already encrypted.
+
   * Removed upstream modules and sources this project does not use.
+
+--------------------------------------------------------------------------------
+libdatachannel-java (bundled in dist/Endlink.jar)
+--------------------------------------------------------------------------------
+
+WebRTC data channels for the NetherNet transport.
+
+  libdatachannel-java  https://github.com/opencollab-incubator/libdatachannel-java
+                       MIT License
+  libdatachannel       https://github.com/paullouisageneau/libdatachannel
+                       Mozilla Public License 2.0, shipped unmodified as the
+                       native libraries inside the jar
 
 --------------------------------------------------------------------------------
 src/main/resources/blockstate/

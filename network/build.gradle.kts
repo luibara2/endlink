@@ -35,6 +35,7 @@ subprojects {
     repositories {
         mavenLocal()
         mavenCentral()
+        maven("https://repo.opencollab.dev/maven-snapshots")
     }
 
     configure<JavaPluginExtension> {

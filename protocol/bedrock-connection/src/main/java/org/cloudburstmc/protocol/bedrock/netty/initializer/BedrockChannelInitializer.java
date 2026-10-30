@@ -8,6 +8,7 @@ import org.cloudburstmc.protocol.bedrock.BedrockSession;
 import org.cloudburstmc.protocol.bedrock.data.CompressionAlgorithm;
 import org.cloudburstmc.protocol.bedrock.data.PacketCompressionAlgorithm;
 import org.cloudburstmc.protocol.bedrock.netty.codec.FrameIdCodec;
+import org.cloudburstmc.protocol.bedrock.netty.codec.UnframedBatchCodec;
 import org.cloudburstmc.protocol.bedrock.netty.codec.batch.BedrockBatchDecoder;
 import org.cloudburstmc.protocol.bedrock.netty.codec.batch.BedrockBatchEncoder;
 import org.cloudburstmc.protocol.bedrock.netty.codec.compression.*;
@@ -43,10 +44,21 @@ public abstract class BedrockChannelInitializer<T extends BedrockSession> extend
         this.postInitChannel(channel);
     }
 
-    protected void preInitChannel(Channel channel) throws Exception {
-        channel.pipeline().addLast(FrameIdCodec.NAME, RAKNET_FRAME_CODEC);
+    public static final int UNFRAMED_TRANSPORT_VERSION = 11;
 
-        int rakVersion = channel.config().getOption(RakChannelOption.RAK_PROTOCOL_VERSION);
+    public static boolean isRakNet(Channel channel) {
+        return channel.config().getOption(RakChannelOption.RAK_PROTOCOL_VERSION) != null;
+    }
+
+    public static int rakVersion(Channel channel) {
+        Integer version = channel.config().getOption(RakChannelOption.RAK_PROTOCOL_VERSION);
+        return version == null ? UNFRAMED_TRANSPORT_VERSION : version;
+    }
+
+    protected void preInitChannel(Channel channel) throws Exception {
+        channel.pipeline().addLast(FrameIdCodec.NAME, isRakNet(channel) ? RAKNET_FRAME_CODEC : UnframedBatchCodec.INSTANCE);
+
+        int rakVersion = rakVersion(channel);
 
         CompressionStrategy compression = getCompression(PacketCompressionAlgorithm.ZLIB, rakVersion, true);
         // At this point all connections use not prefixed compression
@@ -84,7 +96,7 @@ public abstract class BedrockChannelInitializer<T extends BedrockSession> extend
     }
 
     protected void initPacketCodec(Channel channel) throws Exception {
-        int rakVersion = channel.config().getOption(RakChannelOption.RAK_PROTOCOL_VERSION);
+        int rakVersion = rakVersion(channel);
 
         switch (rakVersion) {
             case 11:

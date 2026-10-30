@@ -15,7 +15,9 @@ java {
 dependencies {
     implementation("org.cloudburstmc.protocol:bedrock-codec")
     implementation("org.cloudburstmc.protocol:bedrock-connection")
-    runtimeOnly("org.slf4j:slf4j-simple:1.7.36")
+    implementation("dev.kastle.netty:transport-nethernet")
+    runtimeOnly("dev.opencollab:libdatachannel-java-arch-detect:0.24.6.0-20261029.091642-10")
+    runtimeOnly("org.slf4j:slf4j-simple:2.0.17")
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")

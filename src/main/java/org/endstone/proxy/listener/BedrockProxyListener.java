@@ -5,9 +5,16 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioDatagramChannel;
+import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
+import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
+import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetHTTPServerSignaling;
+import org.cloudburstmc.netty.channel.nethernet.signaling.PongData;
 import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
 import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 import org.cloudburstmc.netty.handler.codec.raknet.server.RakServerRateLimiter;
+import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
+import org.cloudburstmc.netty.util.nethernet.TokenTrust;
+import org.endstone.proxy.config.NetherNetConfig;
 import org.cloudburstmc.protocol.bedrock.BedrockPeer;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
@@ -74,6 +81,7 @@ public final class BedrockProxyListener {
     private final ProxyPermissions permissions;
     private ProxyConsole console;
     private Channel channel;
+    private Channel netherNetChannel;
     private BackendPaletteStore backendPaletteStore = BackendPaletteStore.disabled();
     private BackendPackCache backendPackCache = BackendPackCache.disabled();
     private final java.util.List<Channel> trustedChannels = new java.util.ArrayList<>();
@@ -231,6 +239,7 @@ public final class BedrockProxyListener {
         }
 
         channel = future.channel();
+        bindNetherNet(backendConnector, offlineLoginForge, resourcePackRegistry, security);
         bindTrustedListeners(backendConnector, offlineLoginForge, resourcePackRegistry, security);
         // The limiter used to be removed here unconditionally, which left the unconnected-ping path
         // — a classic UDP amplification target — unmetered on a public address. It stays installed
@@ -386,64 +395,159 @@ public final class BedrockProxyListener {
                 // can receive at its claimed address, which is what makes a spoofed source IP
                 // useless for opening sessions.
                 .option(RakChannelOption.RAK_SEND_COOKIE, security.sendConnectionCookie())
-                .childHandler(new BedrockServerInitializer() {
-                    @Override
-                    public ListenerSession createSession0(BedrockPeer peer, int subClientId) {
-                        return new ListenerSession(peer, subClientId, BedrockProxyListener.this::onSessionClosed);
-                    }
-
-                    @Override
-                    protected void initSession(org.cloudburstmc.protocol.bedrock.BedrockServerSession session) {
-                        ListenerSession listenerSession = (ListenerSession) session;
-                        // Before anything else: RAK_MAX_CONNECTIONS is one pool shared by every
-                        // address, so an unthrottled host can hold all of it. Closing the channel
-                        // rather than sending a disconnect is deliberate — no codec has been
-                        // negotiated yet, so there is nothing to encode a kick message with.
-                        if (trusted == null && !connectionThrottle.accept(listenerSession.getSocketAddress())) {
-                            listenerSession.getPeer().getChannel().close();
-                            return;
-                        }
-                        listenerSession.setThrottled(trusted == null);
-                        // Bound what an anonymous peer can make the proxy allocate. Sits between the
-                        // compression codec and the batch decoder so it sees the decompressed size,
-                        // which is the number every downstream consumer scales its work off. Lifts
-                        // as soon as the login succeeds and setProxyConnection runs.
-                        listenerSession.getPeer().getChannel().pipeline().addBefore(
-                                BedrockBatchDecoder.NAME,
-                                PreAuthBatchLimiter.NAME,
-                                new PreAuthBatchLimiter(() -> listenerSession.proxyConnection() != null)
-                        );
-                        listenerSession.getPeer().getChannel().pipeline().addLast(
-                                "endstone-client-exception-logger",
-                                new LoggingExceptionHandler("client")
-                        );
-                        sessions.add(listenerSession);
-                        listenerSession.setPacketHandler(new InitialClientPacketHandler(
-                                listenerSession,
-                                new org.endstone.proxy.network.NetworkSettingsNegotiator(
-                                        new ProtocolNegotiator(protocolRegistry),
-                                        config.compressionAlgorithm(),
-                                        config.compressionThreshold()
-                                ),
-                                backendConnector,
-                                new ClientLoginAuthenticator(
-                                        security.requireXuid(),
-                                        trusted != null,
-                                        trusted != null ? trusted.loginSecret() : null,
-                                        trusted != null ? trusted.namePrefix() : ""
-                                ),
-                                offlineLoginForge,
-                                connectedPlayers,
-                                BedrockProxyListener.this::onPlayerRosterChanged,
-                                resourcePackRegistry,
-                                backendPaletteStore,
-                                backendPackCache
-                        ));
-                        updateAdvertisement();
-                    }
-                })
+                .childHandler(serverInitializer(trusted, backendConnector, offlineLoginForge,
+                        resourcePackRegistry, security))
                 .bind(address)
                 .awaitUninterruptibly();
+    }
+
+    private BedrockServerInitializer serverInitializer(
+            TrustedListenerSpec trusted,
+            BackendConnector backendConnector,
+            OfflineLoginForge offlineLoginForge,
+            ProxyResourcePackRegistry resourcePackRegistry,
+            SecurityConfig security
+    ) {
+        return new BedrockServerInitializer() {
+            @Override
+            public ListenerSession createSession0(BedrockPeer peer, int subClientId) {
+                return new ListenerSession(peer, subClientId, BedrockProxyListener.this::onSessionClosed);
+            }
+
+            @Override
+            protected void initSession(org.cloudburstmc.protocol.bedrock.BedrockServerSession session) {
+                ListenerSession listenerSession = (ListenerSession) session;
+                // Before anything else: RAK_MAX_CONNECTIONS is one pool shared by every
+                // address, so an unthrottled host can hold all of it. Closing the channel
+                // rather than sending a disconnect is deliberate — no codec has been
+                // negotiated yet, so there is nothing to encode a kick message with.
+                if (trusted == null && !connectionThrottle.accept(listenerSession.getSocketAddress())) {
+                    listenerSession.getPeer().getChannel().close();
+                    return;
+                }
+                listenerSession.setThrottled(trusted == null);
+                // Bound what an anonymous peer can make the proxy allocate. Sits between the
+                // compression codec and the batch decoder so it sees the decompressed size,
+                // which is the number every downstream consumer scales its work off. Lifts
+                // as soon as the login succeeds and setProxyConnection runs.
+                listenerSession.getPeer().getChannel().pipeline().addBefore(
+                        BedrockBatchDecoder.NAME,
+                        PreAuthBatchLimiter.NAME,
+                        new PreAuthBatchLimiter(() -> listenerSession.proxyConnection() != null)
+                );
+                listenerSession.getPeer().getChannel().pipeline().addLast(
+                        "endstone-client-exception-logger",
+                        new LoggingExceptionHandler("client")
+                );
+                sessions.add(listenerSession);
+                listenerSession.setPacketHandler(new InitialClientPacketHandler(
+                        listenerSession,
+                        new org.endstone.proxy.network.NetworkSettingsNegotiator(
+                                new ProtocolNegotiator(protocolRegistry),
+                                config.compressionAlgorithm(),
+                                config.compressionThreshold()
+                        ),
+                        backendConnector,
+                        new ClientLoginAuthenticator(
+                                security.requireXuid(),
+                                trusted != null,
+                                trusted != null ? trusted.loginSecret() : null,
+                                trusted != null ? trusted.namePrefix() : ""
+                        ),
+                        offlineLoginForge,
+                        connectedPlayers,
+                        BedrockProxyListener.this::onPlayerRosterChanged,
+                        resourcePackRegistry,
+                        backendPaletteStore,
+                        backendPackCache
+                ));
+                updateAdvertisement();
+            }
+        };
+    }
+
+    private void bindNetherNet(
+            BackendConnector backendConnector,
+            OfflineLoginForge offlineLoginForge,
+            ProxyResourcePackRegistry resourcePackRegistry,
+            SecurityConfig security
+    ) {
+        NetherNetConfig nethernet = config.nethernet();
+        if (!nethernet.enabled()) {
+            System.out.println("NetherNet is disabled; clients from 1.26.60 on that no longer use RakNet cannot join.");
+            return;
+        }
+        InetSocketAddress signalingAddress = new InetSocketAddress(nethernet.signalingHost(), nethernet.signalingPort());
+        InetSocketAddress iceAddress = new InetSocketAddress(nethernet.iceHost(), nethernet.icePort());
+        try {
+            OperatorIdentity identity = OperatorIdentity.fromPemOrCreate(
+                    nethernet.identityFile().toFile(), nethernet.identityDomain());
+            NetherNetHTTPServerSignaling.Builder builder = new NetherNetHTTPServerSignaling.Builder()
+                    .setIdentity(identity)
+                    .setTokenTrust(TokenTrust.MINECRAFT_AUTH)
+                    .setIceOnLocalPort(false)
+                    .setMaxConnectionsPerAddress(Math.max(1, security.maxConnectionsPerAddress()))
+                    .setMaxPendingJoins(nethernet.maxPendingJoins())
+                    .setAdvertisedAddresses(nethernet.advertisedAddresses())
+                    .setRequiresTls(nethernet.requireTls())
+                    .setMotdProvider((host, remoteAddress, client) -> netherNetMotd());
+            if (nethernet.https()) {
+                builder.setHttpsPem(nethernet.httpsCertificate().toFile(), nethernet.httpsPrivateKey().toFile());
+            }
+            ChannelFuture future = new ServerBootstrap()
+                    .group(eventLoopGroup)
+                    .channelFactory(NetherNetChannelFactory.server(builder.build()))
+                    .option(NetherChannelOption.NETHER_SERVER_ICE_ADDRESS, iceAddress)
+                    .childHandler(serverInitializer(null, backendConnector, offlineLoginForge,
+                            resourcePackRegistry, security))
+                    .bind(signalingAddress)
+                    .awaitUninterruptibly();
+            if (!future.isSuccess()) {
+                throw new IOException(String.valueOf(future.cause()), future.cause());
+            }
+            netherNetChannel = future.channel();
+            System.out.printf(
+                    "NetherNet listening for %s signaling on TCP %s:%d, media on UDP %s:%d, operator key %s (%s).%n",
+                    nethernet.https() ? "HTTPS and HTTP" : "HTTP",
+                    signalingAddress.getHostString(),
+                    signalingAddress.getPort(),
+                    iceAddress.getHostString(),
+                    iceAddress.getPort(),
+                    nethernet.identityFile().getFileName(),
+                    nethernet.identityDomain()
+            );
+        } catch (Throwable e) {
+            System.out.printf(
+                    "WARNING: NetherNet could not start on TCP %s:%d / UDP %s:%d (%s). Only RakNet clients can join.%n",
+                    signalingAddress.getHostString(),
+                    signalingAddress.getPort(),
+                    iceAddress.getHostString(),
+                    iceAddress.getPort(),
+                    e
+            );
+        }
+    }
+
+    private PongData netherNetMotd() {
+        BedrockCodec codec = protocolRegistry.advertisedClientCodec();
+        return new PongData.Builder()
+                .setServerName(config.motd())
+                .setLevelName(config.subMotd())
+                .setProtocol(codec.getProtocolVersion())
+                .setVersion(codec.getMinecraftVersion())
+                .setGameType(gameTypeId(config.gameType()))
+                .setPlayerCount(connectedPlayers.size())
+                .setMaxPlayerCount(config.maxPlayers())
+                .setOnlineAuth(true)
+                .build();
+    }
+
+    private static int gameTypeId(String gameType) {
+        return switch (gameType.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "creative", "1" -> 1;
+            case "adventure", "2" -> 2;
+            default -> 0;
+        };
     }
 
     /**
@@ -515,6 +619,9 @@ public final class BedrockProxyListener {
                 trusted.close().awaitUninterruptibly();
             }
             trustedChannels.clear();
+            if (netherNetChannel != null) {
+                netherNetChannel.close().awaitUninterruptibly();
+            }
             if (channel != null) {
                 channel.close().awaitUninterruptibly();
             }

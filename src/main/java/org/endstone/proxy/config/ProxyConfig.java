@@ -38,7 +38,8 @@ public record ProxyConfig(
         Path backendPackCacheDir,
         boolean crossBackendPalette,
         Path crossBackendPaletteCacheFile,
-        String publicAddress
+        String publicAddress,
+        NetherNetConfig nethernet
 ) {
     private static final String DEFAULT_LISTEN_HOST = "0.0.0.0";
     private static final int DEFAULT_LISTEN_PORT = 19132;
@@ -84,6 +85,9 @@ public record ProxyConfig(
         }
         if (compressionThreshold < 0) {
             throw new IllegalArgumentException("compressionThreshold cannot be negative");
+        }
+        if (nethernet == null) {
+            nethernet = NetherNetConfig.disabled(listenAddress.getHostString(), listenAddress.getPort());
         }
         // resourcePacksDir may be null (no packs configured)
     }
@@ -253,7 +257,9 @@ public record ProxyConfig(
                 backendPackCacheDir,
                 crossBackendPalette,
                 crossBackendPaletteCacheFile,
-                ConfigValues.stripInlineComment(properties.getProperty("publicAddress", "")).trim()
+                ConfigValues.stripInlineComment(properties.getProperty("publicAddress", "")).trim(),
+                NetherNetConfig.from(properties, configDir, listenHost, listenPort,
+                        properties.getProperty("motd", "Endstone Proxy"))
         );
     }
 
@@ -326,6 +332,10 @@ public record ProxyConfig(
         properties.setProperty("resourcePacks.dir", "");
         properties.setProperty("resourcePacks.cacheBackendPacks", "true");
         properties.setProperty("crossBackendPalette", "true");
+        properties.setProperty("nethernet.enabled", "true");
+        properties.setProperty("nethernet.port", "0");
+        properties.setProperty("nethernet.icePort", "0");
+        properties.setProperty("nethernet.identityFile", NetherNetConfig.DEFAULT_IDENTITY_FILE);
         return properties;
     }
 

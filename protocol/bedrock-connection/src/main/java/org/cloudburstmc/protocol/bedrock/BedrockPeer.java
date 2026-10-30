@@ -14,7 +14,6 @@ import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.cloudburstmc.netty.channel.raknet.RakDisconnectReason;
-import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
 import org.cloudburstmc.protocol.bedrock.codec.v428.Bedrock_v428;
@@ -135,6 +134,10 @@ public class BedrockPeer extends ChannelInboundHandlerAdapter {
         if (!secretKey.getAlgorithm().equals("AES")) {
             throw new IllegalArgumentException("Invalid key algorithm");
         }
+        if (!BedrockChannelInitializer.isRakNet(this.channel)) {
+            log.debug("Transport of {} is already encrypted, Bedrock encryption stays off", getSocketAddress());
+            return;
+        }
         // Check if the codecs exist in the pipeline
         if (this.channel.pipeline().get(BedrockEncryptionEncoder.class) != null ||
                 this.channel.pipeline().get(BedrockEncryptionDecoder.class) != null) {
@@ -240,7 +243,7 @@ public class BedrockPeer extends ChannelInboundHandlerAdapter {
     }
 
     public int getRakVersion() {
-        return this.channel.config().getOption(RakChannelOption.RAK_PROTOCOL_VERSION);
+        return BedrockChannelInitializer.rakVersion(this.channel);
     }
 
     /*
